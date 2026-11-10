@@ -147,7 +147,8 @@ std::vector<int> Track::contourRows(const std::vector<int>& pitches, int startRo
     return rows;
 }
 
-Track Track::fromSong(MidiSong& song, int startLevel) {
+Track Track::fromSong(MidiSong& song, int startLevel, int difficulty) {
+    difficulty = std::clamp(difficulty, 0, 3);
     Track t(static_cast<uint32_t>(song.notes.size() * 7919 + 17), startLevel);
     t.finite_ = true;
     t.beatsPerBar_ = song.beatsPerBar;
@@ -194,13 +195,17 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
         const bool onBeat = std::fabs(beatPos - std::round(beatPos)) < 1e-9;
         const bool strong = onBeat && (static_cast<int64_t>(std::llround(beatPos)) % 2 == 0);
         const bool held = n->length >= 1.0;
+        // The denser of the difficulty's floor and the level's tier.
+        const int levelTier = lvl <= 2 ? 0 : lvl <= 4 ? 1 : 2;
+        const int tier = std::max(std::min(difficulty, 2), levelTier);
         bool keep = true;
-        if (lvl <= 2) keep = strong || held;
-        else if (lvl <= 4) keep = onBeat || held;
+        if (tier == 0) keep = strong || held;
+        else if (tier == 1) keep = onBeat || held;
         if (!keep) continue;
         MidiNote* chord = second[static_cast<size_t>(b)];
         const bool nextFree = b + 1 < steps && !onStep[static_cast<size_t>(b + 1)];
-        chart.push_back({b, n, chord && nextFree ? chord : nullptr});
+        const bool chordsAllowed = difficulty >= 1 && (difficulty >= 3 || lvl >= 3);
+        chart.push_back({b, n, chord && nextFree && chordsAllowed ? chord : nullptr});
     }
     std::vector<int> pitches;
     pitches.reserve(chart.size());
@@ -224,7 +229,8 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
             s.velocity = c.note->velocity;
             s.noteBeats = c.note->length;
             c.note->manual = true;
-            if (lvl >= 5 && t.unit() < std::min(0.45, 0.15 + 0.04 * lvl)) {
+            const bool decoysAllowed = difficulty >= 3 || (difficulty >= 2 && lvl >= 5);
+            if (decoysAllowed && t.unit() < std::min(0.45, 0.15 + 0.04 * lvl)) {
                 int d;
                 do d = static_cast<int>(t.unit() * 4) % 4;
                 while (d == target || d == target + (c.note->note > (c.chord ? c.chord->note : c.note->note) ? 1 : -1));

@@ -34,7 +34,10 @@ public:
     /// A fixed course: the melody of a song, one cue per beat at most, the row
     /// following the pitch. Beyond the end the course is plain running.
     /// Marks the notes the player will sound as manual, so the engine leaves them to the pads.
-    static Track fromSong(class MidiSong& song, int startLevel = 1);
+    /// `difficulty`: 0 Easy (strong beats, no chords), 1 Medium (every beat), 2 Hard
+    /// (every note), 3 Expert (every note, chords, decoys from the start). Levels
+    /// still fill the chart in on top.
+    static Track fromSong(class MidiSong& song, int startLevel = 1, int difficulty = 1);
 
     bool finite() const { return finite_; }
     int64_t length() const { return length_; }

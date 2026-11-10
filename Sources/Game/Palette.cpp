@@ -61,10 +61,11 @@ Palette Palette::make(float hue) {
     p.accentHot = hsv(h + 0.14f, 0.55f, 1.0f);
     p.danger = 0xff3b30;
     p.white = 0xffffff;
-    p.row[0] = hsv(h + 0.52f, 0.80f, 1.0f); // top: cyan
-    p.row[1] = hsv(h + 0.88f, 0.75f, 1.0f); // pink
-    p.row[2] = hsv(h + 0.11f, 0.95f, 1.0f); // amber
-    p.row[3] = hsv(h + 0.36f, 0.80f, 0.95f); // bottom: green
+    // Lanes, left to right: green, red, yellow, blue.
+    p.row[0] = hsv(h + 0.36f, 0.80f, 0.95f);
+    p.row[1] = hsv(h + 0.00f, 0.85f, 1.0f);
+    p.row[2] = hsv(h + 0.14f, 0.90f, 1.0f);
+    p.row[3] = hsv(h + 0.58f, 0.80f, 1.0f);
     p.runner = 0xfafafa;
     p.runnerTrail = hsv(h + 0.52f, 0.60f, 1.0f);
     return p;

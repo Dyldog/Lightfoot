@@ -27,6 +27,7 @@ void Scores::load() {
         e.combo = list[i]["combo"].asInt(0);
         e.date = list[i]["date"].asString("");
         e.song = list[i]["song"].asString("");
+        e.difficulty = list[i]["difficulty"].asInt(1);
         entries_.push_back(e);
     }
     std::sort(entries_.begin(), entries_.end(), [](const Entry& a, const Entry& b) { return a.score > b.score; });
@@ -42,6 +43,7 @@ void Scores::save() const {
         o.set("combo", e.combo);
         o.set("date", e.date);
         o.set("song", e.song);
+        o.set("difficulty", e.difficulty);
         list.push(o);
     }
     Json root = Json::object();
@@ -50,9 +52,10 @@ void Scores::save() const {
     paths::writeFileAtomic(scoresPath(), root.dump(2) + "\n");
 }
 
-int Scores::add(int score, int level, int combo, const std::string& song) {
+int Scores::add(int score, int level, int combo, const std::string& song, int difficulty) {
     Entry e;
     e.song = song;
+    e.difficulty = difficulty;
     e.score = score;
     e.level = level;
     e.combo = combo;

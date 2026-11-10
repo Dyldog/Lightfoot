@@ -118,26 +118,26 @@ lightfoot::Game& playTo(lightfoot::Game& game, lightfoot::HostLoop& loop, int64_
 void testJudgeAndScore() {
     setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
     lightfoot::Game game;
-    game.setStartLevel(1);
+    game.setDifficulty(lightfoot::Game::Easy);
     lightfoot::HostLoop loop(game);
     int64_t now = 1000;
     loop.step(now);
     game.startGame(now, 7);
-    check(game.state() == lightfoot::Game::State::Playing && game.lives() == 3 && game.score() == 0, "a run starts fresh");
+    check(game.state() == lightfoot::Game::State::Playing && game.rock() == 0.5f && game.score() == 0, "a run starts fresh");
     // Count-in, then the first cue.
     playTo(game, loop, now, 0.5);
     check(game.cueSlot() > 0, "a cue is pending after the count-in");
     const int64_t cue = game.cueSlot();
     const lightfoot::Slot& s = game.track().at(cue);
-    // Too early is a slip: no points, no life lost.
+    // Too early is a slip: no points, a nick off the rock meter.
     playTo(game, loop, now, cue - 0.6);
-    loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
+    loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row)));
     now += 8;
     loop.step(now);
-    check(game.lastHit() == lightfoot::Game::Hit::Slip && game.score() == 0 && game.lives() == 3, "an early tap slips");
-    // On the beat: perfect.
+    check(game.lastHit() == lightfoot::Game::Hit::Slip && game.score() == 0 && game.rock() > 0.45f, "an early tap slips");
+    // On the beat: perfect, on any pad of the lane.
     playTo(game, loop, now, cue - 0.01);
-    loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
+    loop.pushPadTap(lightfoot::Game::padIndex(1, lightfoot::Game::laneOf(s.row)));
     now += 8;
     loop.step(now);
     check(game.lastHit() == lightfoot::Game::Hit::Perfect, "a tap on the beat is perfect");
@@ -147,26 +147,28 @@ void testJudgeAndScore() {
     const int64_t cue2 = game.cueSlot();
     const lightfoot::Slot& s2 = game.track().at(cue2);
     playTo(game, loop, now, cue2 + 0.1);
-    loop.pushPadTap(lightfoot::Game::padIndex(s2.row, 0));
+    loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s2.row)));
     now += 8;
     loop.step(now);
     check(game.lastHit() == lightfoot::Game::Hit::Good && game.score() == 160, "a late tap within the window is good for 60");
-    // Ignore the one after: a miss costs a life.
+    // Ignore the one after: a miss drains the rock meter and the streak.
     const int64_t cue3 = game.cueSlot();
+    const float rockBefore = game.rock();
     playTo(game, loop, now, cue3 + 0.5);
-    check(game.lastHit() == lightfoot::Game::Hit::Miss && game.lives() == 2 && game.combo() == 0, "a missed cue costs a life and the combo");
+    check(game.lastHit() == lightfoot::Game::Hit::Miss && game.rock() < rockBefore - 0.05f && game.combo() == 0, "a missed gem drains the rock meter and the streak");
     // Wrong (unlit) pad: nothing happens; the decoy would slip.
     const int64_t cue4 = game.cueSlot();
     const lightfoot::Slot& s4 = game.track().at(cue4);
     playTo(game, loop, now, cue4 - 0.02);
     int unlit = 0;
-    while (unlit == s4.row || unlit == s4.row2 || unlit == s4.decoy) ++unlit;
+    while (unlit == lightfoot::Game::laneOf(s4.row) || (s4.row2 >= 0 && unlit == lightfoot::Game::laneOf(s4.row2)) || (s4.decoy >= 0 && unlit == lightfoot::Game::laneOf(s4.decoy))) ++unlit;
     const int scoreBefore = game.score();
-    loop.pushPadTap(lightfoot::Game::padIndex(unlit, 0));
+    const auto hitBefore = game.lastHit();
+    loop.pushPadTap(lightfoot::Game::padIndex(3, unlit));
     now += 8;
     loop.step(now);
-    check(game.score() == scoreBefore && game.cueSlot() == cue4, "an unlit pad is inert");
-    loop.pushPadTap(lightfoot::Game::padIndex(s4.row, 0));
+    check(game.score() == scoreBefore && game.cueSlot() == cue4 && (game.lastHit() == hitBefore || game.lastHit() == lightfoot::Game::Hit::Slip), "an unlit lane is inert or early, never a hit");
+    loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s4.row)));
     now += 8;
     loop.step(now);
     check(game.score() > scoreBefore, "the lit pad still works after an idle tap");
@@ -175,7 +177,7 @@ void testJudgeAndScore() {
         now += 16;
         loop.step(now);
     }
-    check(game.state() == lightfoot::Game::State::GameOver, "three misses end the run");
+    check(game.state() == lightfoot::Game::State::GameOver && game.rock() <= 0.0f, "an empty rock meter ends the run");
     check(game.scores().best() == game.score() && game.score() > 0, "the run is on the score table");
     lightfoot::Scores again;
     again.load();
@@ -186,7 +188,7 @@ void testJudgeAndScore() {
 void testTwinNeedsBothPads() {
     setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
     lightfoot::Game game;
-    game.setStartLevel(6);
+    game.setDifficulty(lightfoot::Game::Expert); // starts at level 7
     lightfoot::HostLoop loop(game);
     int64_t now = 1000;
     loop.step(now);
@@ -194,7 +196,7 @@ void testTwinNeedsBothPads() {
     // Find the first twin and hit everything before it perfectly.
     int64_t k = 0;
     while (game.track().at(k).row2 < 0 && k < 2000) ++k;
-    check(k < 2000, "a level-6 course has a twin");
+    check(k < 2000, "an expert course has a chord");
     for (;;) {
         playTo(game, loop, now, 0.0);
         const int64_t cue = game.cueSlot();
@@ -202,22 +204,48 @@ void testTwinNeedsBothPads() {
         const lightfoot::Slot& s = game.track().at(cue);
         playTo(game, loop, now, cue - 0.005);
         if (cue == k) {
-            loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
+            loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row)));
             now += 8;
             loop.step(now);
-            check(game.cueSlot() == k, "one pad of a twin leaves the cue pending");
-            loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(s.row2, 0)));
+            check(game.cueSlot() == k, "one lane of a chord leaves the gem pending");
+            loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row2))));
             now += 8;
             loop.step(now);
-            check(game.cueSlot() != k && game.lastHit() != lightfoot::Game::Hit::Miss, "the second pad completes the twin");
+            check(game.cueSlot() != k && game.lastHit() != lightfoot::Game::Hit::Miss, "the second lane completes the chord");
             break;
         }
-        loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
+        loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row)));
         now += 8;
         loop.step(now);
         if (game.state() != lightfoot::Game::State::Playing) break;
     }
-    check(game.lives() == 3, "a twin hit with both pads loses nothing");
+    check(game.rock() >= 0.5f, "a chord hit with both lanes loses nothing");
+    // Both pads in the same frame: one hit, no slip from the second pad.
+    {
+        lightfoot::Game g2;
+        g2.setDifficulty(lightfoot::Game::Expert);
+        lightfoot::HostLoop l2(g2);
+        int64_t t2 = 1000;
+        l2.step(t2);
+        g2.startGame(t2, 3);
+        int64_t kk = 0;
+        while (g2.track().at(kk).row2 < 0 && kk < 2000) ++kk;
+        for (;;) {
+            playTo(g2, l2, t2, 0.0);
+            const int64_t cue = g2.cueSlot();
+            if (cue < 0 || cue > kk || g2.state() != lightfoot::Game::State::Playing) break;
+            const lightfoot::Slot s = g2.track().at(cue);
+            playTo(g2, l2, t2, cue - 0.005);
+            l2.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row)));
+            if (s.row2 >= 0) l2.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row2)));
+            t2 += 8;
+            l2.step(t2);
+            if (cue == kk) {
+                check(g2.lastHit() == lightfoot::Game::Hit::Perfect || g2.lastHit() == lightfoot::Game::Hit::Good, "a chord hit with both pads in one frame counts once as a hit");
+                break;
+            }
+        }
+    }
     unsetenv("LIGHTFOOT_ROOT");
 }
 
@@ -253,7 +281,7 @@ void testMidiSong() {
 
     // The course follows the tune: cues on beats where the tune plays, rows from pitch.
     // At level 1 the chart is the strong beats only; from level 5 it is every note.
-    lightfoot::Track easy = lightfoot::Track::fromSong(*song, 1);
+    lightfoot::Track easy = lightfoot::Track::fromSong(*song, 1, lightfoot::Game::Easy);
     check(easy.finite() && easy.stepBeats() == 0.5 && easy.length() >= 128, "a song with off-beat notes runs in half-beat steps");
     int easyCues = 0, easyOff = 0;
     for (int64_t i = 0; i < easy.length(); ++i) {
@@ -287,7 +315,12 @@ void testMidiSong() {
         for (int v : seen) usedRows += v;
     }
     check(usedRows >= 3, "even the easy chart moves across the rows");
-    lightfoot::Track course = lightfoot::Track::fromSong(*song, 5);
+    lightfoot::Track course = lightfoot::Track::fromSong(*song, 5, lightfoot::Game::Hard);
+    // Difficulty alone fills the chart in: Hard at level 1 plays every note.
+    lightfoot::Track hardAtOne = lightfoot::Track::fromSong(*song, 1, lightfoot::Game::Hard);
+    int hardCues = 0;
+    for (int64_t i = 0; i < hardAtOne.length(); ++i) hardCues += hardAtOne.at(i).cue ? 1 : 0;
+    check(hardCues >= 50, "Hard plays every note from level 1");
     int cues = 0, offBeatCues = 0;
     for (int64_t i = 0; i < course.length(); ++i) {
         if (!course.at(i).cue) continue;
@@ -303,10 +336,13 @@ void testMidiSong() {
     check(offBeatCues == 14, "the off-beat pickups are jumps between the beats");
     check(!course.at(4).cue && course.at(course.length() + 50).cue == false, "no jumps before bar 2 or after the end");
     check(easy.level(0) == 1 && easy.level(64) == 2 && easy.level(128) == 3, "song levels still change every 32 beats");
-    lightfoot::Track hard = lightfoot::Track::fromSong(*song, 6);
-    int decoys = 0;
-    for (int64_t i = 0; i < hard.length(); ++i) decoys += hard.at(i).decoy >= 0 ? 1 : 0;
-    check(hard.level(0) == 6 && decoys > 0, "a song started at level 6 has decoys");
+    lightfoot::Track expert = lightfoot::Track::fromSong(*song, 7, lightfoot::Game::Expert);
+    lightfoot::Track medium = lightfoot::Track::fromSong(*song, 3, lightfoot::Game::Medium);
+    int expertDecoys = 0, mediumDecoys = 0;
+    for (int64_t i = 0; i < expert.length(); ++i) expertDecoys += expert.at(i).decoy >= 0 ? 1 : 0;
+    for (int64_t i = 0; i < medium.length(); ++i) mediumDecoys += medium.at(i).decoy >= 0 ? 1 : 0;
+    check(expert.level(0) == 7 && expertDecoys > 0 && mediumDecoys == 0, "Expert has decoys, Medium never does");
+    check(std::string(lightfoot::Game::difficultyName(3)) == "EXPERT" && lightfoot::Game::startLevelFor(2) == 5, "difficulty names and start levels");
     // Highest tune note is the top row, lowest the bottom row.
     int topRow = 9, bottomRow = -1;
     for (int64_t i = 0; i < course.length(); ++i)
@@ -318,6 +354,7 @@ void testMidiSong() {
 
     // Playing a song: notes come out of the synth, and the run ends with SONG CLEAR.
     lightfoot::Game game;
+    game.setDifficulty(lightfoot::Game::Easy);
     check(game.loadSong(path), "the game loads the song");
     lightfoot::HostLoop loop(game);
     int64_t now = 1000;
@@ -370,13 +407,13 @@ void testMidiSong() {
         const int64_t cue = game.cueSlot();
         if (cue >= 0 && std::fabs(game.pos() - static_cast<double>(cue)) < 0.03) {
             const lightfoot::Slot s = game.track().at(cue);
-            loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
-            if (s.row2 >= 0) loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(s.row2, 0)));
+            loop.pushPadTap(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row)));
+            if (s.row2 >= 0) loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(3, lightfoot::Game::laneOf(s.row2))));
         }
         loop.step(now);
     }
     check(game.state() == lightfoot::Game::State::GameOver && game.songComplete(), "playing the whole song ends in SONG CLEAR");
-    check(game.lives() == 3, "a perfectly tapped song loses no lives");
+    check(game.rock() > 0.9f, "a perfectly tapped song fills the rock meter");
     check(game.level() >= 3 && spedUp, "a song rises through the levels and speeds up with them");
     check(game.scores().entries().front().song == "Lightfoot Demo", "the score remembers the song");
     unsetenv("LIGHTFOOT_ROOT");

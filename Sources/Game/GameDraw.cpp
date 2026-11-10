@@ -1,5 +1,6 @@
-// Everything Lightfoot draws: the night, the course, the runner, the HUD, the
-// menus, and the lights on the panel. Game.cpp holds the rules.
+// Everything Lightfoot draws: the night behind the highway, the highway and
+// its gems, the frets, the HUD, the menus, and the lights on the panel.
+// Game.cpp holds the rules.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,10 +17,13 @@ namespace lightfoot {
 
 namespace {
 
-constexpr int kRunnerX = 96;
-constexpr int kSlotW = 56;
-constexpr int kHorizon = 150;
-constexpr int kGroundY = 194;
+constexpr int kHorizon = 150;        // where the city meets the ground, behind the highway
+constexpr int kVanishX = 160;        // the highway's vanishing point
+constexpr int kVanishY = 58;
+constexpr int kStrikeY = 196;        // the strike line
+constexpr int kHalfWidthAtStrike = 118;
+constexpr double kDepthScale = 0.42; // how quickly steps recede
+constexpr double kStepsShown = 7.5;  // steps of highway drawn ahead of the strike line
 constexpr Rect kScreen{0, 0, Canvas::width, Canvas::height};
 
 uint32_t hash32(uint32_t x) {
@@ -44,38 +48,33 @@ uint32_t Game::nowSeed_() {
     return rng_;
 }
 
-// MARK: - Geometry
+// MARK: - Highway geometry
 
-int Game::rowY(int row) const {
-    return 98 + std::clamp(row, 0, 3) * 26; // row 0 is the top row of pads: the highest platform
+double Game::yForDepth(double z) const {
+    // z is steps ahead of the strike line; 0 is the line, negative has passed it.
+    const double scale = 1.0 / (1.0 + std::max(-0.9, z) * kDepthScale);
+    return kVanishY + (kStrikeY - kVanishY) * scale;
 }
 
-int Game::slotW() const {
-    return stepBeats() < 1.0 ? 40 : kSlotW;
+double Game::halfWidthAtY(double y) const {
+    return kHalfWidthAtStrike * (y - kVanishY) / (kStrikeY - kVanishY);
 }
 
-int Game::xForSlot(double slotIndex) const {
-    return kRunnerX + static_cast<int>(std::lround((slotIndex - pos_) * slotW()));
+double Game::laneX(int lane, double y) const {
+    return kVanishX + (lane - 1.5) * halfWidthAtY(y) / 2.0;
 }
 
-double Game::runnerY(double b) const {
-    if (fallStart_ >= 0) {
-        const double t = std::max(0.0, b - fallStart_) * stepBeats();
-        return rowY(jumpFrom_) + 8 + t * t * 320;
-    }
-    if (!landed_ && jumpEnd_ > jumpStart_) {
-        const double t = std::clamp((b - jumpStart_) / (jumpEnd_ - jumpStart_), 0.0, 1.0);
-        const double from = rowY(jumpFrom_), to = rowY(jumpTo_);
-        const double arc = 20 + 6 * std::abs(jumpFrom_ - jumpTo_) + (jumpEnd_ - jumpStart_ > 1.0 ? 14 : 0);
-        return from + (to - from) * t - arc * std::sin(t * 3.14159265);
-    }
-    return rowY(runnerRow_);
+int Game::strikeX(int lane) const {
+    return static_cast<int>(std::lround(laneX(lane, kStrikeY)));
+}
+
+int Game::strikeY() const {
+    return kStrikeY;
 }
 
 // MARK: - Frame
 
 void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
-    (void)in;
     switch (state_) {
     case State::Title: drawTitle(canvas, nowMs); break;
     case State::HowTo: drawHowTo(canvas, nowMs); break;
@@ -83,13 +82,13 @@ void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
     case State::Songs: drawSongs(canvas, nowMs); break;
     case State::SongInfo: drawSongInfo(canvas, nowMs); break;
     case State::Browse: break; // the toolkit browser drew itself during update
-    case State::Playing: drawPlay(canvas, nowMs); break;
+    case State::Playing: drawPlay(canvas, in, nowMs); break;
     case State::Paused:
-        drawPlay(canvas, nowMs);
+        drawPlay(canvas, in, nowMs);
         drawPaused(canvas, nowMs);
         break;
     case State::GameOver:
-        drawPlay(canvas, nowMs);
+        drawPlay(canvas, in, nowMs);
         drawGameOver(canvas, nowMs);
         break;
     }
@@ -99,7 +98,7 @@ void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
         const int alpha = static_cast<int>(std::min<int64_t>(255, left * 255 / 400));
         const int scale = banner_.size() <= 2 ? 4 : 2;
         const int w = Canvas::scaledWidth(banner_, scale);
-        const int x = (Canvas::width - w) / 2, y = 92 - Canvas::scaledHeight(scale) / 2;
+        const int x = (Canvas::width - w) / 2, y = 100 - Canvas::scaledHeight(scale) / 2;
         canvas.fillAlpha({x - 10, y - 6, w + 20, Canvas::scaledHeight(scale) + 12}, 0x000000, alpha / 2);
         canvas.textScaled(x + 2, y + 2, banner_, palette_.accent, scale, alpha / 2);
         canvas.textScaled(x, y, banner_, palette_.white, scale, alpha);
@@ -110,18 +109,14 @@ void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
 
 void Game::drawSky(Canvas& canvas, int64_t nowMs, double scroll) {
     const Palette& p = palette_;
-    // Gradient to the horizon, then the ground.
-    for (int y = 0; y < kGroundY; ++y) {
-        const int t = y * 255 / kGroundY;
+    for (int y = 0; y < Canvas::height; ++y) {
+        const int t = std::min(255, y * 255 / kStrikeY);
         const uint32_t c = t < 150 ? Palette::mix(p.skyTop, p.skyMid, t * 255 / 150) : Palette::mix(p.skyMid, p.skyHorizon, (t - 150) * 255 / 105);
         canvas.hline(0, Canvas::width - 1, y, c);
     }
-    canvas.fill({0, kGroundY, Canvas::width, Canvas::height - kGroundY}, p.ground);
-
-    // Stars: fixed to the sky, twinkling, drifting a little with the scroll.
     for (uint32_t i = 0; i < 70; ++i) {
-        const int sx = static_cast<int>(std::fmod(hashUnit(i * 7 + 1) * 400 - scroll * 2.0 + 4000, 400.0)) - 40;
-        const int sy = static_cast<int>(hashUnit(i * 7 + 2) * 120);
+        const int sx = static_cast<int>(std::fmod(hashUnit(i * 7 + 1) * 400 - scroll * 0.6 + 4000, 400.0)) - 40;
+        const int sy = static_cast<int>(hashUnit(i * 7 + 2) * 110);
         const float tw = 0.5f + 0.5f * std::sin(nowMs * 0.002f * (1 + hashUnit(i * 7 + 3) * 2) + i);
         const int a = static_cast<int>(90 + 150 * tw);
         canvas.blend(sx, sy, p.white, a);
@@ -132,30 +127,23 @@ void Game::drawSky(Canvas& canvas, int64_t nowMs, double scroll) {
             canvas.blend(sx, sy + 1, p.white, a / 3);
         }
     }
-
-    // The sun, low and striped, with its glow on the haze.
-    const int sunX = 244, sunY = 104, sunR = 36;
-    canvas.glow(sunX, sunY, sunR + 26, p.sun, 110);
+    const int sunX = 160, sunY = 92, sunR = 44;
+    canvas.glow(sunX, sunY, sunR + 30, p.sun, 110);
     for (int dy = -sunR; dy <= sunR; ++dy) {
         const int y = sunY + dy;
         if (y >= kHorizon) break;
         const int half = static_cast<int>(std::sqrt(static_cast<double>(sunR * sunR - dy * dy)));
-        // Stripes thicken towards the bottom, the classic poster sun.
         if (dy > 0 && ((dy + static_cast<int>(nowMs / 90)) % std::max(3, 10 - dy / 5)) < std::min(3, 1 + dy / 14)) continue;
         const uint32_t c = Palette::mix(p.sunCore, p.sun, std::clamp((dy + sunR) * 255 / (2 * sunR), 0, 255));
         canvas.hline(sunX - half, sunX + half, y, c);
     }
-
-    // Mountains: a slow silhouette.
     for (int x = 0; x < Canvas::width; ++x) {
-        const double wx = x + scroll * 0.12;
+        const double wx = x + scroll * 0.05;
         const double h = 22 * std::sin(wx * 0.021) + 12 * std::sin(wx * 0.053 + 1.3) + 6 * std::sin(wx * 0.11 + 0.4);
-        const int top = kHorizon - 22 - static_cast<int>(h);
-        canvas.vline(x, top, kHorizon, p.mountain);
+        canvas.vline(x, kHorizon - 22 - static_cast<int>(h), kHorizon, p.mountain);
     }
-    // Far city, then near city: blocks with a few lit windows that blink to the beat.
     for (int layer = 0; layer < 2; ++layer) {
-        const double par = layer == 0 ? 0.3 : 0.55;
+        const double par = layer == 0 ? 0.12 : 0.22;
         const int period = layer == 0 ? 22 : 34;
         const uint32_t body = layer == 0 ? p.cityFar : p.cityNear;
         const double origin = scroll * par;
@@ -166,9 +154,8 @@ void Game::drawSky(Canvas& canvas, int64_t nowMs, double scroll) {
             const int h = (layer == 0 ? 16 : 26) + static_cast<int>(hashUnit(hb + 2) * (layer == 0 ? 34 : 46));
             const int x0 = static_cast<int>(std::lround(b * period - origin));
             const int top = kHorizon + (layer == 0 ? 0 : 6) - h;
-            canvas.fill({x0, top, w, kGroundY - top}, body);
-            if (hashUnit(hb + 3) > 0.5f) canvas.fill({x0 + w / 2 - 1, top - 6, 2, 6}, body); // an aerial
-            // Windows
+            canvas.fill({x0, top, w, kStrikeY - top}, body);
+            if (hashUnit(hb + 3) > 0.5f) canvas.fill({x0 + w / 2 - 1, top - 6, 2, 6}, body);
             for (int wy = top + 4; wy < kHorizon - 2; wy += 6)
                 for (int wx = x0 + 3; wx < x0 + w - 2; wx += 5) {
                     const uint32_t hw = hash32(hb * 131 + static_cast<uint32_t>(wy * 7 + wx));
@@ -180,129 +167,123 @@ void Game::drawSky(Canvas& canvas, int64_t nowMs, double scroll) {
                 }
         }
     }
-    // Horizon line glow.
     canvas.hline(0, Canvas::width - 1, kHorizon, Palette::mix(p.gridLineBright, p.skyHorizon, 120));
+    canvas.fill({0, kHorizon + 1, Canvas::width, Canvas::height - kHorizon - 1}, p.ground);
+    const double phase = stepPhase();
+    for (int i = 0; i < 8; ++i) {
+        const double t = std::fmod(i + phase, 8.0) / 8.0;
+        const int y = kHorizon + 1 + static_cast<int>(t * t * (Canvas::height - kHorizon));
+        canvas.hline(0, Canvas::width - 1, y, p.gridLine);
+    }
 }
 
-void Game::drawWorld(Canvas& canvas, int64_t nowMs) {
+// MARK: - The highway
+
+void Game::drawHighway(Canvas& canvas, const Frame& in, int64_t nowMs) {
     const Palette& p = palette_;
-    const double scroll = pos_ * slotW();
-    const int sx = shake_ > 0 ? static_cast<int>(std::sin(nowMs * 0.09) * shake_ * 4) : 0;
-    const int sy = shake_ > 0 ? static_cast<int>(std::cos(nowMs * 0.07) * shake_ * 3) : 0;
-    drawSky(canvas, nowMs, scroll);
+    const int sx = shake_ > 0 ? static_cast<int>(std::sin(nowMs * 0.09) * shake_ * 3) : 0;
+    const float pulse = 0.5f + 0.5f * static_cast<float>(1.0 - beatPhase());
 
-    // Perspective floor: lines rushing towards the runner, pulsing on the beat.
-    const double phase = beatPhase();
-    for (int i = 0; i < 9; ++i) {
-        const double t = std::fmod(i + phase, 9.0) / 9.0;
-        const int y = kGroundY + static_cast<int>(t * t * (Canvas::height - kGroundY));
-        const bool bright = i == 0;
-        canvas.hline(0, Canvas::width - 1, y + sy, bright ? Palette::mix(p.gridLineBright, p.gridLine, static_cast<int>(phase * 255)) : p.gridLine);
+    // The road: a dark trapezoid from the vanishing point to the strike line and beyond.
+    for (int y = kVanishY; y < Canvas::height; ++y) {
+        const double hw = halfWidthAtY(std::min<double>(y, kStrikeY + 30));
+        const int x0 = static_cast<int>(kVanishX - hw) + sx, x1 = static_cast<int>(kVanishX + hw) + sx;
+        const int depthShade = std::clamp((y - kVanishY) * 255 / (kStrikeY - kVanishY), 0, 255);
+        canvas.hline(x0, x1, y, Palette::mix(p.skyMid, 0x0a0912, 140 + depthShade / 3));
     }
-    for (int i = -8; i <= 8; ++i) {
-        const int xTop = 160 + i * 6 + sx, xBottom = 160 + i * 46 + sx;
-        canvas.line(xTop, kGroundY, xBottom, Canvas::height - 1, p.gridLine);
+    // Beat lines sliding down, bar lines brighter.
+    const int64_t firstStep = static_cast<int64_t>(std::floor(pos_)) - 1;
+    const double stepsPerBar = track_.beatsPerBar() / stepBeats();
+    for (int64_t k = firstStep; k < firstStep + static_cast<int64_t>(kStepsShown) + 2; ++k) {
+        const double z = static_cast<double>(k) - pos_;
+        if (z < -0.6 || z > kStepsShown) continue;
+        const int y = static_cast<int>(std::lround(yForDepth(z)));
+        const double hw = halfWidthAtY(y);
+        const bool bar = std::fmod(static_cast<double>(k), stepsPerBar) == 0;
+        const bool beat = std::fmod(static_cast<double>(k) * stepBeats(), 1.0) == 0;
+        if (!bar && !beat) continue;
+        const int a = static_cast<int>(60 + 120 * (y - kVanishY) / static_cast<double>(kStrikeY - kVanishY));
+        canvas.fillAlpha({static_cast<int>(kVanishX - hw) + sx, y, static_cast<int>(2 * hw), 1}, bar ? p.gridLineBright : p.gridLine, bar ? a : a / 2);
+    }
+    // Lane dividers and the glowing edges.
+    for (int l = 0; l <= 4; ++l) {
+        const double xTop = kVanishX + (l - 2) * halfWidthAtY(kVanishY + 6) / 2.0;
+        const double xBottom = kVanishX + (l - 2) * kHalfWidthAtStrike / 2.0;
+        const bool edge = l == 0 || l == 4;
+        canvas.line(static_cast<int>(xTop) + sx, kVanishY + 6, static_cast<int>(xBottom) + sx, Canvas::height - 1, edge ? p.gridLineBright : Palette::mix(p.gridLine, 0x000000, 60));
+        if (edge) canvas.line(static_cast<int>(xTop) + sx + (l ? -1 : 1), kVanishY + 6, static_cast<int>(xBottom) + sx + (l ? -1 : 1), Canvas::height - 1, Palette::mix(p.gridLineBright, 0x000000, 150));
     }
 
-    // Platforms: a slab per beat at its row, neon edge, glow beneath, and a
-    // chevron where a jump is due. Twin cues sit on a gap.
-    const int64_t firstSlot = static_cast<int64_t>(std::floor(pos_)) - 2;
-    const float pulse = 0.5f + 0.5f * std::sin(nowMs * 0.012f);
-    for (int64_t k = firstSlot; k < firstSlot + 4 + Canvas::width / slotW(); ++k) {
-        const Slot& s = track_.at(std::max<int64_t>(k, 0));
-        const int x0 = xForSlot(static_cast<double>(k)) + sx;
-        const int x1 = xForSlot(static_cast<double>(k) + 1) - 3 + sx;
-        if (x1 <= 0 || x0 >= Canvas::width) continue;
-        const int row = k < 0 ? 3 : s.row;
-        const int top = rowY(row) + sy;
-        if (k >= 0 && s.gap) {
-            // A gap: hazard light below.
-            canvas.fillAlpha({x0 + 4, kGroundY - 8, x1 - x0 - 8, 4}, p.danger, 90 + static_cast<int>(60 * pulse));
-            continue;
-        }
-        const uint32_t edge = p.row[row];
-        canvas.fill({x0, top + 2, x1 - x0, 9}, p.platform);
-        canvas.fillAlpha({x0, top + 11, x1 - x0, 6}, p.platform, 120);
-        canvas.hline(x0, x1 - 1, top, edge);
-        canvas.hline(x0, x1 - 1, top + 1, Palette::mix(edge, p.platform, 120));
-        canvas.fillAlpha({x0, top + 2, x1 - x0, 4}, edge, 60);
-        // Support light down to the floor.
-        canvas.vline(x0, top + 12, kGroundY - 1, Palette::mix(p.platform, p.ground, 128));
-        if (k >= 0 && s.cue) {
-            const bool pending = k == cueSlot_;
-            const int a = pending ? 150 + static_cast<int>(100 * pulse) : 110;
-            const int cx = x0 + 2;
-            // Chevron on the leading edge, in the row colour.
-            for (int i = 0; i < 6; ++i) canvas.blend(cx + i, top - 9 + std::abs(i - 3) + 1, edge, a);
-            for (int i = 0; i < 6; ++i) canvas.blend(cx + i, top - 6 + std::abs(i - 3) + 1, edge, a);
-            canvas.glow(cx + 2, top - 4, pending ? 9 : 6, edge, pending ? 120 : 60);
-            if (s.row2 >= 0) {
-                // A twin's second colour, so the long jump reads on the course too.
-                canvas.hline(x0, x1 - 1, top + 2, p.row[s.row2]);
+    // Gems, far to near so the close ones draw on top. Sustains draw as tails.
+    const int64_t lastStep = firstStep + static_cast<int64_t>(kStepsShown) + 2;
+    for (int64_t k = lastStep; k >= firstStep; --k) {
+        if (k < 0) continue;
+        const Slot s = track_.at(k);
+        if (!s.cue) continue;
+        const double z = static_cast<double>(k) - pos_;
+        if (z > kStepsShown || z < -1.0) continue;
+        const bool pending = k == cueSlot_;
+        const bool hitAlready = k == lastHitSlot_ && lastHit_ != Hit::Miss && k <= resolvedUpTo_;
+        if (hitAlready) continue; // it burst into flames when it was hit
+        const bool passed = k <= resolvedUpTo_ && !pending; // missed: it slides on, grey
+        const double y = yForDepth(z);
+        const double depth = (y - kVanishY) / static_cast<double>(kStrikeY - kVanishY);
+        const int r = 3 + static_cast<int>(std::lround(7 * depth));
+        auto gem = [&](int lane, uint32_t color, bool ghost) {
+            const int x = static_cast<int>(std::lround(laneX(lane, y))) + sx;
+            const int yy = static_cast<int>(std::lround(y));
+            if (s.noteBeats >= 1.0 && !ghost) {
+                const double zEnd = z + s.noteBeats / stepBeats();
+                const double yEnd = yForDepth(std::min(zEnd, kStepsShown));
+                const int xEnd = static_cast<int>(std::lround(laneX(lane, yEnd))) + sx;
+                for (int i = -1; i <= 1; ++i) canvas.line(x + i, yy, xEnd + i / 2, static_cast<int>(yEnd), Palette::mix(color, 0x000000, 90));
             }
-            if (s.decoy >= 0) canvas.fillAlpha({x0 + 2, top + 5, 4, 4}, p.danger, 160);
-        }
-    }
-
-    // Trail and runner.
-    const int ry = static_cast<int>(std::lround(runnerY(pos_))) + sy;
-    if (state_ == State::Playing && fallStart_ < 0 && (nowMs / 33) % 2 == 0) {
-        const uint32_t trail = landed_ ? p.row[runnerRow_] : p.runnerTrail;
-        particles_.push_back({static_cast<float>(kRunnerX - 4), static_cast<float>(ry - 6 - (nowSeed_() % 6)), -60.0f - (nowSeed_() % 40), 0.0f, 0.0f, 0.35f, trail, 1});
-    }
-    drawParticles(canvas);
-    drawRunner(canvas, kRunnerX + sx, ry, nowMs);
-    drawTexts(canvas);
-}
-
-void Game::drawRunner(Canvas& canvas, int x, int y, int64_t nowMs) {
-    (void)nowMs;
-    const Palette& p = palette_;
-    const bool airborne = !landed_ || fallStart_ >= 0;
-    const float ph = runPhase_ * 6.2831853f;
-    const int bob = airborne ? 0 : static_cast<int>(std::fabs(std::sin(ph)) * 2);
-    const int hipY = y - 12 - bob;
-    const uint32_t skin = fallStart_ >= 0 ? p.danger : p.runner;
-    const uint32_t glowC = p.row[runnerRow_];
-    canvas.glow(x + 2, y - 12, 16, glowC, 60);
-    // Two passes: a dark outline first, then the figure, so it reads on any sky.
-    for (int pass = 0; pass < 2; ++pass) {
-        const uint32_t c = pass == 0 ? 0x101018 : skin;
-        auto seg = [&](int x0, int y0, int x1, int y1) {
-            if (pass == 0) {
-                for (int dx = -1; dx <= 1; ++dx)
-                    for (int dy = -1; dy <= 1; ++dy) canvas.line(x0 + dx, y0 + dy, x1 + dx, y1 + dy, c);
-            } else {
-                canvas.line(x0, y0, x1, y1, c);
-                canvas.line(x0 + 1, y0, x1 + 1, y1, c);
+            if (ghost) {
+                canvas.discAlpha(x, yy, r, p.textDim, 110);
+                return;
             }
+            canvas.glow(x, yy, r + 5, color, pending ? 90 + static_cast<int>(90 * pulse) : 60);
+            canvas.disc(x, yy, r, Palette::mix(color, 0x000000, 60));
+            canvas.disc(x, yy, std::max(1, r - 2), color);
+            canvas.disc(x - r / 3, yy - r / 3, std::max(1, r / 3), Palette::mix(color, p.white, 170));
+            if (pending && depth > 0.85) canvas.ring(x, yy, r + 3, 1, Palette::mix(color, p.white, static_cast<int>(200 * pulse)));
         };
-        // Legs
-        if (airborne) {
-            seg(x, hipY, x - 5, hipY + 6);
-            seg(x - 5, hipY + 6, x - 1, hipY + 11);
-            seg(x, hipY, x + 5, hipY + 4);
-            seg(x + 5, hipY + 4, x + 9, hipY + 1);
-        } else {
-            const int l1 = static_cast<int>(std::sin(ph) * 6), l2 = static_cast<int>(std::sin(ph + 3.14159f) * 6);
-            seg(x, hipY, x + l1, y - 5);
-            seg(x + l1, y - 5, x + l1 + (l1 > 0 ? 3 : -1), y);
-            seg(x, hipY, x + l2, y - 5);
-            seg(x + l2, y - 5, x + l2 + (l2 > 0 ? 3 : -1), y);
+        const int lane = laneOf(s.row);
+        if (s.row2 >= 0) {
+            const int lane2 = laneOf(s.row2);
+            const int xa = static_cast<int>(std::lround(laneX(std::min(lane, lane2), y))) + sx;
+            const int xb = static_cast<int>(std::lround(laneX(std::max(lane, lane2), y))) + sx;
+            canvas.fillAlpha({xa, static_cast<int>(y) - 1, xb - xa, 3}, p.white, passed ? 60 : 160);
+            gem(lane2, p.row[lane2], passed);
         }
-        // Body, leaning into the run
-        seg(x, hipY, x + 3, hipY - 10);
-        // Arms
-        const int a1 = airborne ? -7 : static_cast<int>(std::sin(ph + 3.14159f) * 5);
-        const int a2 = airborne ? -6 : static_cast<int>(std::sin(ph) * 5);
-        seg(x + 2, hipY - 8, x + 2 + a1, hipY - 3 + (airborne ? -5 : 0));
-        seg(x + 2, hipY - 8, x + 3 + a2 + 3, hipY - 4 + (airborne ? -5 : 0));
-        // Head
-        canvas.disc(x + 4, hipY - 15, pass == 0 ? 5 : 4, c);
+        gem(lane, p.row[lane], passed);
+        if (s.decoy >= 0) {
+            const int dl = laneOf(s.decoy);
+            const int x = static_cast<int>(std::lround(laneX(dl, y))) + sx;
+            const int yy = static_cast<int>(std::lround(y));
+            canvas.disc(x, yy, r, 0x3a0a10);
+            canvas.ring(x, yy, r, 1, p.danger);
+            canvas.line(x - r / 2, yy - r / 2, x + r / 2, yy + r / 2, p.danger);
+            canvas.line(x - r / 2, yy + r / 2, x + r / 2, yy - r / 2, p.danger);
+        }
     }
-    // Visor in the lane colour
-    canvas.hline(x + 2, x + 7, hipY - 15, glowC);
-    canvas.hline(x + 3, x + 7, hipY - 14, Palette::mix(glowC, skin, 100));
+
+    // The frets at the strike line: rings in the lane colours, lit while held, flashing on a hit.
+    for (int lane = 0; lane < 4; ++lane) {
+        const int x = strikeX(lane) + sx;
+        bool held = false;
+        for (int row = 0; row < 4; ++row) held |= in.padDown(padIndex(row, lane));
+        const int64_t flashAge = nowMs - fretFlashMs_[static_cast<size_t>(lane)];
+        const bool flash = fretFlashMs_[static_cast<size_t>(lane)] > 0 && flashAge < 140;
+        const uint32_t c = p.row[lane];
+        canvas.fillAlpha({x - 13, kStrikeY - 4, 26, 8}, c, held || flash ? 110 : 50);
+        canvas.ring(x, kStrikeY, 10, 2, held || flash ? p.white : c);
+        canvas.disc(x, kStrikeY, 7, held || flash ? Palette::mix(c, p.white, flash ? 200 : 90) : Palette::mix(c, 0x000000, 150));
+        if (flash) canvas.ring(x, kStrikeY, 10 + static_cast<int>(flashAge / 10), 1, Palette::mix(c, 0x000000, static_cast<int>(flashAge * 255 / 140)));
+    }
+    canvas.hline(static_cast<int>(kVanishX - kHalfWidthAtStrike) + sx, static_cast<int>(kVanishX + kHalfWidthAtStrike) + sx, kStrikeY, Palette::mix(p.white, p.gridLineBright, 120));
+    drawParticles(canvas);
+    drawTexts(canvas);
 }
 
 void Game::drawParticles(Canvas& canvas) {
@@ -330,81 +311,59 @@ void Game::drawTexts(Canvas& canvas) {
 
 // MARK: - Play
 
-void Game::drawPlay(Canvas& canvas, int64_t nowMs) {
-    drawWorld(canvas, nowMs);
+void Game::drawPlay(Canvas& canvas, const Frame& in, int64_t nowMs) {
+    drawSky(canvas, nowMs, pos_ * 40);
+    drawHighway(canvas, in, nowMs);
     drawHud(canvas, nowMs);
 }
 
 void Game::drawHud(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
-    // Score, big, with a shadow.
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%07d", score_);
-    canvas.textScaled(6, 5, buf, 0x000000, 2, 120);
-    canvas.textScaled(4, 3, buf, p.white, 2);
+    char buf[48];
+    std::snprintf(buf, sizeof buf, "%d", score_);
+    const int sw = Canvas::scaledWidth(buf, 2);
+    canvas.textScaled(Canvas::width - 6 - sw + 2, 5, buf, 0x000000, 2, 120);
+    canvas.textScaled(Canvas::width - 6 - sw, 3, buf, p.white, 2);
+    const int mult = 1 + std::min(combo_, 70) / 10;
+    std::snprintf(buf, sizeof buf, "x%d", mult);
+    canvas.textScaled(Canvas::width - 6 - Canvas::scaledWidth(buf, 1), 36, buf, mult > 1 ? p.accentHot : p.textDim, 1);
+
     if (song_) {
-        canvas.text(5, 37, song_->name.substr(0, 20), p.textDim, Font::Small);
-        // Progress through the song, with the tempo beside it.
+        canvas.text(5, 4, song_->name.substr(0, 22), p.text, Font::Small);
+        std::snprintf(buf, sizeof buf, "%s  LEVEL %d  %.0f BPM%s", difficultyName(difficulty_), level_, engine_.tempo(), assist_ < 0.999f ? "  ASSIST" : "");
+        canvas.text(5, 16, buf, p.textDim, Font::Small);
         const double done = track_.length() > 0 ? std::clamp(static_cast<double>(slot_) / static_cast<double>(track_.length()), 0.0, 1.0) : 0.0;
-        canvas.fillAlpha({5, 52, 70, 3}, p.textDim, 90);
-        canvas.fill({5, 52, static_cast<int>(70 * done), 3}, p.accent);
-        std::snprintf(buf, sizeof buf, "LEVEL %d  %.0f BPM%s", level_, engine_.tempo(), assist_ < 0.999f ? " ASSIST" : "");
-        canvas.text(80, 48, buf, p.textDim, Font::Small);
+        canvas.fillAlpha({5, 30, 110, 3}, p.textDim, 90);
+        canvas.fill({5, 30, static_cast<int>(110 * done), 3}, p.accent);
     } else {
-        std::snprintf(buf, sizeof buf, "LEVEL %d   %.0f BPM%s", level_, track_.tempoFor(level_) * assist_, assist_ < 0.999f ? "   ASSIST" : "");
-        canvas.text(5, 37, buf, p.textDim, Font::Small);
+        canvas.text(5, 4, "ENDLESS", p.text, Font::Small);
+        std::snprintf(buf, sizeof buf, "%s  LEVEL %d  %.0f BPM%s", difficultyName(difficulty_), level_, track_.tempoFor(level_) * assist_, assist_ < 0.999f ? "  ASSIST" : "");
+        canvas.text(5, 16, buf, p.textDim, Font::Small);
     }
 
-    // Lives: three lights top right.
-    for (int i = 0; i < 3; ++i) {
-        const int x = Canvas::width - 14 - i * 14;
-        const bool on = i < lives_;
-        if (on) canvas.glow(x, 11, 8, p.accent, 90);
-        canvas.disc(x, 11, 4, on ? p.accentHot : Palette::mix(p.textDim, 0x000000, 150));
-        if (on) canvas.disc(x - 1, 10, 1, p.white);
+    // Rock meter: left edge, red to green, with a needle.
+    const Rect meter{8, 70, 10, 110};
+    canvas.fillAlpha({meter.x - 3, meter.y - 3, meter.w + 6, meter.h + 6}, 0x000000, 120);
+    for (int y = 0; y < meter.h; ++y) {
+        const float t = 1.0f - static_cast<float>(y) / meter.h;
+        const uint32_t c = t < 0.33f ? p.danger : t < 0.66f ? p.row[2] : p.row[0];
+        canvas.fillAlpha({meter.x, meter.y + y, meter.w, 1}, c, t <= rock_ ? 230 : 50);
     }
-    canvas.textRight({0, 20, Canvas::width - 6, 12}, "BEST " + std::to_string(std::max(scores_.best(), score_)), p.textDim, Font::Small);
+    const int needleY = meter.y + meter.h - static_cast<int>(rock_ * meter.h);
+    canvas.fill({meter.x - 2, needleY - 1, meter.w + 4, 2}, p.white);
+    if (rock_ < 0.25f && (nowMs / 250) % 2 == 0) canvas.text(meter.x - 2, meter.bottom() + 4, "!!", p.danger, Font::Small);
 
-    // Combo: centre, a ring that pulses with the beat.
     if (combo_ >= 2) {
-        const float pulse = static_cast<float>(1.0 - beatPhase());
-        const int r = 15 + static_cast<int>(pulse * 4);
-        canvas.ring(160, 24, r, 2, Palette::mix(p.accent, p.white, static_cast<int>(pulse * 120)));
         std::snprintf(buf, sizeof buf, "%d", combo_);
-        const int w = Canvas::scaledWidth(buf, 1);
-        canvas.textScaled(160 - w / 2, 16, buf, p.white, 1);
-        canvas.textCentered({130, 42, 60, 10}, "COMBO", p.textDim, Font::Small);
-        const int mult = 1 + std::min(combo_, 70) / 10;
-        if (mult > 1) {
-            std::snprintf(buf, sizeof buf, "x%d", mult);
-            canvas.text(182, 18, buf, p.accentHot, Font::Small);
-        }
+        canvas.fillAlpha({26, 206, 64, 28}, 0x000000, 110);
+        canvas.textScaled(30, 208, buf, p.white, 1);
+        canvas.text(30 + Canvas::scaledWidth(buf, 1) + 4, 213, "STREAK", p.textDim, Font::Small);
     }
-
-    // The pads, mirrored bottom left, so the strip can be learnt on screen.
-    drawPadMirror(canvas, 6, 197, 9, nowMs);
-    // Judgement window hint: the beat line under the runner.
-    const double phase = beatPhase();
-    const int lineA = static_cast<int>(200 * (1.0 - phase));
-    canvas.fillAlpha({kRunnerX - 1, kGroundY - 16, 3, 14}, p.white, lineA / 2);
-}
-
-void Game::drawPadMirror(Canvas& canvas, int x, int y, int cell, int64_t nowMs) {
-    const int gap = 2;
-    canvas.fillAlpha({x - 3, y - 3, 4 * (cell + gap) + 4, 4 * (cell + gap) + 4}, 0x000000, 110);
-    for (int row = 0; row < 4; ++row)
-        for (int col = 0; col < 4; ++col) {
-            const int pad = padIndex(row, col);
-            const uint32_t c = padColor(pad, nowMs);
-            const Rect r{x + col * (cell + gap), y + row * (cell + gap), cell, cell};
-            if (c == 0) canvas.fillAlpha(r, palette_.textDim, 40);
-            else {
-                canvas.fill(r, c);
-                canvas.glow(r.x + cell / 2, r.y + cell / 2, cell, c, 60);
-            }
-        }
-    // The left column is "now": a thin bracket.
-    canvas.vline(x - 2, y, y + 4 * (cell + gap) - gap - 1, palette_.white);
+    const int judged = perfects_ + goods_ + misses_;
+    if (judged > 0) {
+        std::snprintf(buf, sizeof buf, "%d%%", (perfects_ + goods_) * 100 / judged);
+        canvas.textRight({0, 212, Canvas::width - 8, 12}, buf, p.textDim, Font::Small);
+    }
 }
 
 // MARK: - Menus
@@ -416,12 +375,10 @@ void Game::drawLogo(Canvas& canvas, int cx, int y, int scale, int64_t nowMs) {
     const int x = cx - w / 2;
     const int bob = static_cast<int>(std::sin(nowMs * 0.0025) * 2);
     canvas.glow(cx, y + Canvas::scaledHeight(scale) / 2 + bob, w / 2 + 10, p.accent, 70);
-    // Chromatic fringe, then the word itself.
     canvas.textScaled(x - 2, y + bob, word, p.row[1], scale, 150);
-    canvas.textScaled(x + 2, y + bob, word, p.row[0], scale, 150);
+    canvas.textScaled(x + 2, y + bob, word, p.row[3], scale, 150);
     canvas.textScaled(x, y + 2 + bob, word, 0x000000, scale, 120);
     canvas.textScaled(x, y + bob, word, p.white, scale);
-    // Underline sweep.
     const int ux = x + static_cast<int>((nowMs / 8) % (w + 40)) - 20;
     canvas.hline(x, x + w, y + Canvas::scaledHeight(scale) + 3 + bob, p.accent);
     canvas.fillAlpha({ux, y + Canvas::scaledHeight(scale) + 2 + bob, 20, 3}, p.white, 200);
@@ -429,31 +386,25 @@ void Game::drawLogo(Canvas& canvas, int cx, int y, int scale, int64_t nowMs) {
 
 void Game::drawTitle(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
-    // The city rolls by on its own; the runner jogs on a flat course.
     beat_ = engine_.positionBeats();
-    drawSky(canvas, nowMs, beat_ * kSlotW);
-    const int top = rowY(3);
-    canvas.fill({0, top + 2, Canvas::width, 9}, p.platform);
-    canvas.hline(0, Canvas::width - 1, top, p.row[3]);
-    canvas.fillAlpha({0, top + 2, Canvas::width, 4}, p.row[3], 60);
-    for (int i = 0; i < 8; ++i) canvas.hline(0, Canvas::width - 1, kGroundY + i * i, p.gridLine);
-    runnerRow_ = 3;
-    landed_ = true;
-    fallStart_ = -1;
-    drawParticles(canvas);
-    drawRunner(canvas, kRunnerX, top, nowMs);
-
+    pos_ = beat_ / stepBeats();
+    drawSky(canvas, nowMs, pos_ * 40);
+    {
+        input blank{};
+        for (int i = 0; i < 16; ++i) blank.pad_hit[i] = blank.pad_pressure[i] = -1;
+        Frame none(blank);
+        drawHighway(canvas, none, nowMs);
+    }
     drawLogo(canvas, 160, 28, 3, nowMs);
     {
-        const char* tag = "RUN THE LIGHTS  -  JUMP ON THE PADS";
+        const char* tag = "HIT THE PADS AS THE GEMS LAND";
         const int w = Canvas::textWidth(tag, Font::Small);
         canvas.fillAlpha({(Canvas::width - w) / 2 - 8, 82, w + 16, 14}, 0x000000, 120);
         canvas.textCentered({0, 83, Canvas::width, 12}, tag, p.text, Font::Small);
     }
-
     static const char* const items[5] = {"PLAY", "SONGS", "HOW TO PLAY", "HIGH SCORES", "QUIT TO STOCK"};
     const Rect panel{176, 100, 136, 88};
-    canvas.fillAlpha(panel, 0x000000, 140);
+    canvas.fillAlpha(panel, 0x000000, 150);
     canvas.hline(panel.x, panel.right() - 1, panel.y, Palette::mix(p.accent, 0x000000, 100));
     for (int i = 0; i < 5; ++i) {
         const bool sel = i == menuCursor_;
@@ -464,84 +415,79 @@ void Game::drawTitle(Canvas& canvas, int64_t nowMs) {
         }
         canvas.text(panel.x + 20, y, items[i], sel ? p.white : p.textDim, Font::Small);
     }
-    // Soft keys and the footer.
     canvas.text(26, 1, "PLAY", p.textDim, Font::Small);
     canvas.text(124, 1, "SONGS", p.textDim, Font::Small);
     canvas.text(236, 1, "SCORES", p.textDim, Font::Small);
     char buf[96];
-    if (song_) std::snprintf(buf, sizeof buf, "SONG  %.20s     BEST %d", song_->name.c_str(), scores_.best());
-    else std::snprintf(buf, sizeof buf, "ENDLESS     BEST %d     START LEVEL %d (K3)", scores_.best(), startLevel_);
+    if (song_) std::snprintf(buf, sizeof buf, "%s (K3)     SONG  %.18s     BEST %d", difficultyName(difficulty_), song_->name.c_str(), scores_.best());
+    else std::snprintf(buf, sizeof buf, "%s (K3)     ENDLESS     BEST %d", difficultyName(difficulty_), scores_.best());
+    canvas.fillAlpha({0, 222, Canvas::width, 18}, 0x000000, 140);
     canvas.textCentered({0, 226, Canvas::width, 12}, buf, Palette::mix(p.textDim, p.white, 60), Font::Small);
     const float blink = 0.5f + 0.5f * std::sin(nowMs * 0.005f);
-    canvas.textCentered({0, 210, Canvas::width, 12}, "PRESS PLAY", Palette::mix(p.textDim, p.white, static_cast<int>(blink * 255)), Font::Small);
-    drawTexts(canvas);
+    canvas.textCentered({0, 208, Canvas::width, 12}, "PRESS PLAY", Palette::mix(p.textDim, p.white, static_cast<int>(blink * 255)), Font::Small);
 }
 
 void Game::drawHowTo(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
     beat_ = engine_.positionBeats();
-    drawSky(canvas, nowMs, beat_ * kSlotW);
+    drawSky(canvas, nowMs, beat_ * 40);
     canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 150);
     canvas.textScaled(10, 6, "HOW TO PLAY", p.white, 1);
     const char* lines[] = {
-        "The course scrolls at the",
-        "music's tempo. The 16 pads are",
-        "the next four beats: a column",
-        "is one beat, the left column",
-        "is NOW. The lit pad in each",
-        "column is the platform you",
-        "must land on. When it reaches",
-        "the left column, hit it ON THE",
-        "BEAT. Only the lit pad works.",
+        "Gems come down the highway in",
+        "four lanes, at the music's tempo.",
+        "The pads are the same highway:",
+        "each row is a step ahead, the",
+        "bottom row is the strike line,",
+        "and the lit pad shows the lane.",
         "",
-        "Two lit pads: hit both for a",
-        "long jump. A dim red pad is a",
-        "decoy: leave it. Miss and you",
-        "fall: three lives. Levels every",
-        "32 beats. Fader down: slower,",
-        "half points.",
+        "When a gem reaches the line, hit",
+        "a pad in its lane, on the beat.",
+        "Any pad in the column counts.",
+        "Two gems joined: hit both lanes.",
+        "A crossed dark gem: leave it.",
         "",
-        "In a song the rows follow the",
-        "tune: a higher note is a row",
-        "up, a lower one a row down.",
+        "Misses drain the rock meter;",
+        "hits fill it. Empty and you fail.",
+        "K3 picks Easy to Expert. Fader",
+        "down: slower, half points.",
     };
     int y = 26;
     for (const char* l : lines) {
         canvas.text(10, y, l, p.text, Font::Small);
         y += 10;
     }
-    // A little example strip: four columns, one lit pad each.
     const int gx = 236, gy = 104, cell = 10;
-    static const int demoRows[4] = {3, 1, 2, 0};
+    static const int demoLanes[4] = {2, 0, 3, 1};
     canvas.fillAlpha({gx - 8, gy - 8, 4 * (cell + 2) + 14, 4 * (cell + 2) + 30}, 0x000000, 110);
-    for (int col = 0; col < 4; ++col)
-        for (int row = 0; row < 4; ++row) {
+    for (int row = 0; row < 4; ++row)
+        for (int col = 0; col < 4; ++col) {
             const Rect r{gx + col * (cell + 2), gy + row * (cell + 2), cell, cell};
-            const bool lit = demoRows[col] == row;
+            const bool lit = demoLanes[row] == col;
             if (lit) {
-                canvas.fill(r, Palette::scale(p.row[row], col == 0 ? 1.0f : 0.45f));
-                if (col == 0) canvas.glow(r.x + 5, r.y + 5, 9, p.row[row], 90);
+                canvas.fill(r, Palette::scale(p.row[col], row == 3 ? 1.0f : 0.35f + 0.15f * row));
+                if (row == 3) canvas.glow(r.x + 5, r.y + 5, 9, p.row[col], 90);
             } else {
                 canvas.fillAlpha(r, p.textDim, 40);
             }
         }
-    canvas.vline(gx - 3, gy, gy + 4 * (cell + 2) - 3, p.white);
-    canvas.text(gx - 4, gy + 52, "NOW +1 +2 +3", p.textDim, Font::Small);
+    canvas.hline(gx - 3, gx + 4 * (cell + 2) - 2, gy + 3 * (cell + 2) - 2, p.white);
+    canvas.text(gx - 4, gy + 52, "NOW: bottom", p.textDim, Font::Small);
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK     PLAY TO START", p.textDim, Font::Small);
 }
 
 void Game::drawScores(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
     beat_ = engine_.positionBeats();
-    drawSky(canvas, nowMs, beat_ * kSlotW);
+    drawSky(canvas, nowMs, beat_ * 40);
     canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 150);
     canvas.textScaled(10, 6, "HIGH SCORES", p.white, 1);
     const auto& list = scores_.entries();
     if (list.empty()) canvas.text(10, 36, "No runs yet. Press PLAY.", p.textDim, Font::Small);
-    else canvas.text(10, 30, "#    SCORE   LV  COMBO  SONG          DATE", p.textDim, Font::Small);
+    else canvas.text(10, 30, "#    SCORE  DIFF  LV STREAK SONG        DATE", p.textDim, Font::Small);
     for (size_t i = 0; i < list.size() && i < 8; ++i) {
         char line[96];
-        std::snprintf(line, sizeof line, "%zu  %7d   %2d   %3d   %-12.12s  %s", i + 1, list[i].score, list[i].level, list[i].combo,
+        std::snprintf(line, sizeof line, "%zu  %7d   %c   %2d   %3d  %-11.11s %s", i + 1, list[i].score, difficultyName(list[i].difficulty)[0], list[i].level, list[i].combo,
                       list[i].song.empty() ? "endless" : list[i].song.c_str(), list[i].date.c_str());
         const bool fresh = static_cast<int>(i) == finalRank_ && state_ == State::Scores;
         canvas.text(10, 46 + static_cast<int>(i) * 14, line, fresh ? p.accentHot : i == 0 ? p.white : p.text, Font::Small);
@@ -552,7 +498,7 @@ void Game::drawScores(Canvas& canvas, int64_t nowMs) {
 void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
     beat_ = engine_.positionBeats();
-    drawSky(canvas, nowMs, beat_ * kSlotW);
+    drawSky(canvas, nowMs, beat_ * 40);
     canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 150);
     canvas.textScaled(10, 6, "SONGS", p.white, 1);
     canvas.textRight({0, 8, Canvas::width - 10, 12}, "Lightfoot/Songs on the card", p.textDim, Font::Small);
@@ -565,8 +511,8 @@ void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
         std::string label;
         uint32_t color = p.text;
         if (i == 0) {
-            label = "ENDLESS COURSE";
-            color = p.row[3];
+            label = "ENDLESS";
+            color = p.row[0];
         } else if (i == rows - 1) {
             label = "BROWSE THE CARD...";
             color = p.accentHot;
@@ -582,7 +528,7 @@ void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
         }
         canvas.textClipped({0, y, Canvas::width - 10, 12}, 22, y, label, sel ? p.white : color, Font::Small);
     }
-    const char* hint = songCursor_ == 0 ? "The generated course, levels and all." : songCursor_ == rows - 1 ? "Any .mid on the SD card or internal storage." : "Press to play. The tune picks the platforms.";
+    const char* hint = songCursor_ == 0 ? "The generated chart, levels and all." : songCursor_ == rows - 1 ? "Any .mid on the SD card or internal storage." : "Press to see the song and pick the lead.";
     canvas.textCentered({0, 208, Canvas::width, 12}, hint, p.textDim, Font::Small);
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK     PRESS OR PLAY TO CHOOSE", p.textDim, Font::Small);
 }
@@ -590,7 +536,7 @@ void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
 void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
     beat_ = engine_.positionBeats();
-    drawSky(canvas, nowMs, beat_ * kSlotW);
+    drawSky(canvas, nowMs, beat_ * 40);
     canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 160);
     if (!song_) return;
     canvas.textScaled(10, 6, song_->name.substr(0, 19), p.white, 1);
@@ -598,8 +544,8 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
     const int bars = static_cast<int>(song_->lengthBeats / std::max(1, song_->beatsPerBar));
     std::snprintf(buf, sizeof buf, "%.0f BPM   %d/4   %d bars   %zu notes%s", song_->tempoAt(0), song_->beatsPerBar, bars, song_->notes.size(), song_->hasDrums ? "" : "   no drums");
     canvas.text(10, 26, buf, p.textDim, Font::Small);
-    canvas.text(10, 46, "LEAD INSTRUMENT  (the line you play, best guess first)", p.accent, Font::Small);
-    const int shown = std::min<int>(8, static_cast<int>(song_->candidates.size()));
+    canvas.text(10, 46, "LEAD INSTRUMENT  (best guess first)", p.accent, Font::Small);
+    const int shown = std::min<int>(7, static_cast<int>(song_->candidates.size()));
     for (int i = 0; i < shown; ++i) {
         const int c = song_->candidates[static_cast<size_t>(i)];
         const MidiSong::ChannelInfo& ch = song_->channels[static_cast<size_t>(c)];
@@ -611,13 +557,15 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
         }
         std::snprintf(buf, sizeof buf, "ch %2d  %-15.15s %5d notes", c + 1, MidiSong::programName(ch.program), ch.notes);
         canvas.text(22, y, buf, sel ? p.white : p.text, Font::Small);
-        // A small bar of how lead-like it looks.
         const int w = static_cast<int>(std::clamp(ch.score / 8.0f, 0.0f, 1.0f) * 40);
         canvas.fillAlpha({270, y + 3, 40, 5}, p.textDim, 60);
         canvas.fill({270, y + 3, w, 5}, sel ? p.accentHot : p.textDim);
     }
-    canvas.textCentered({0, 190, Canvas::width, 12}, "Wheel picks the instrument whose notes you play.", p.textDim, Font::Small);
-    canvas.textCentered({0, 204, Canvas::width, 12}, "The rest of the band plays itself.", p.textDim, Font::Small);
+    std::snprintf(buf, sizeof buf, "DIFFICULTY  %s  (K3)", difficultyName(difficulty_));
+    canvas.text(10, 176, buf, p.accent, Font::Small);
+    static const char* const hints[4] = {"the strong beats of the tune, no chords", "every beat of the tune, chords from level 3", "every note, decoys from level 5", "every note, chords and decoys, 10% faster"};
+    canvas.text(10, 188, hints[std::clamp(difficulty_, 0, 3)], p.textDim, Font::Small);
+    canvas.textCentered({0, 208, Canvas::width, 12}, "Wheel picks the line you play.", p.textDim, Font::Small);
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK          PLAY OR PRESS TO START", p.textDim, Font::Small);
 }
 
@@ -627,7 +575,7 @@ void Game::drawPaused(Canvas& canvas, int64_t nowMs) {
     canvas.fillAlpha(kScreen, 0x000000, 150);
     const char* word = "PAUSED";
     canvas.textScaled((Canvas::width - Canvas::scaledWidth(word, 2)) / 2, 86, word, p.white, 2);
-    canvas.textCentered({0, 130, Canvas::width, 12}, "PLAY  RESUME      STOP  QUIT RUN", p.textDim, Font::Small);
+    canvas.textCentered({0, 130, Canvas::width, 12}, "PLAY  RESUME      STOP  QUIT", p.textDim, Font::Small);
 }
 
 void Game::drawGameOver(Canvas& canvas, int64_t nowMs) {
@@ -635,16 +583,17 @@ void Game::drawGameOver(Canvas& canvas, int64_t nowMs) {
     const int64_t age = nowMs - stateSince_;
     canvas.fillAlpha(kScreen, 0x000000, static_cast<int>(std::min<int64_t>(170, age / 3)));
     const bool best = finalRank_ == 0;
-    const char* word = songComplete_ ? "SONG CLEAR" : best ? "NEW BEST" : "GAME OVER";
+    const char* word = songComplete_ ? "SONG CLEAR" : best ? "NEW BEST" : "YOU FAILED";
     const int w = Canvas::scaledWidth(word, 2);
     canvas.glow(160, 70, 70, best || songComplete_ ? p.accent : p.danger, 60);
     canvas.textScaled((Canvas::width - w) / 2 + 2, 56, word, 0x000000, 2, 150);
-    canvas.textScaled((Canvas::width - w) / 2, 54, word, best ? p.accentHot : p.white, 2);
+    canvas.textScaled((Canvas::width - w) / 2, 54, word, best || songComplete_ ? p.accentHot : p.white, 2);
     char buf[64];
     std::snprintf(buf, sizeof buf, "%d", score_);
     const int sw = Canvas::scaledWidth(buf, 2);
     canvas.textScaled((Canvas::width - sw) / 2, 92, buf, p.white, 2);
-    std::snprintf(buf, sizeof buf, "LEVEL %d    BEST COMBO %d", level_, maxCombo_);
+    const int judged = perfects_ + goods_ + misses_;
+    std::snprintf(buf, sizeof buf, "%s   LEVEL %d   STREAK %d   %d%% HIT", difficultyName(difficulty_), level_, maxCombo_, judged ? (perfects_ + goods_) * 100 / judged : 0);
     canvas.textCentered({0, 128, Canvas::width, 12}, buf, p.text, Font::Small);
     std::snprintf(buf, sizeof buf, "PERFECT %d   GOOD %d   MISS %d   SLIP %d", perfects_, goods_, misses_, slips_);
     canvas.textCentered({0, 142, Canvas::width, 12}, buf, p.textDim, Font::Small);
@@ -664,24 +613,25 @@ uint32_t Game::padColor(int pad, int64_t nowMs) const {
     if (padFlashMs_[idx] > 0 && flashAge < 160) {
         return Palette::mix(padFlashColor_[idx], 0x000000, static_cast<int>(flashAge * 255 / 160));
     }
-    const int row = padRow(pad), col = padCol(pad);
+    const int row = padRow(pad), lane = padCol(pad);
     switch (state_) {
     case State::Playing:
     case State::Paused: {
-        const int64_t k = columnBase() + col;
+        // Rows are time: the bottom row is the strike line, the top row three steps ahead.
+        const int64_t k = columnBase() + (3 - row);
         if (k < 0) return 0;
-        const Slot& s = track_.at(k);
+        const Slot s = track_.at(k);
         if (!s.cue) return 0;
-        const bool lit = row == s.row || row == s.row2;
+        const bool lit = lane == laneOf(s.row) || (s.row2 >= 0 && lane == laneOf(s.row2));
         if (lit) {
             float level;
-            if (col == 0) level = 0.55f + 0.45f * static_cast<float>(1.0 - stepPhase());
-            else level = 0.42f - col * 0.1f;
+            if (row == 3) level = 0.55f + 0.45f * static_cast<float>(1.0 - stepPhase());
+            else level = 0.45f - (3 - row) * 0.1f;
             if (state_ == State::Paused) level *= 0.3f;
-            if (twinHalf_ && col == 0 && row == twinHalfRow_) level = 1.0f;
-            return Palette::scale(p.row[row], level);
+            if (twinHalf_ && row == 3 && lane == twinHalfRow_) level = 1.0f;
+            return Palette::scale(p.row[lane], level);
         }
-        if (row == s.decoy) return col == 0 ? 0x5a0000 : 0x2a0000;
+        if (s.decoy >= 0 && lane == laneOf(s.decoy)) return row == 3 ? 0x5a0000 : 0x2a0000;
         return 0;
     }
     case State::GameOver: {
@@ -689,9 +639,8 @@ uint32_t Game::padColor(int pad, int64_t nowMs) const {
         return Palette::scale(p.danger, 0.08f + 0.25f * t);
     }
     default: {
-        // The title's slow wave across the rows, in the row colours.
-        const float t = 0.5f + 0.5f * std::sin(titlePhase_ * 2.4f - col * 0.9f + row * 0.5f);
-        return Palette::scale(p.row[row], 0.05f + 0.45f * t * t);
+        const float t = 0.5f + 0.5f * std::sin(titlePhase_ * 2.4f - row * 0.9f + lane * 0.5f);
+        return Palette::scale(p.row[lane], 0.05f + 0.45f * t * t);
     }
     }
 }
@@ -702,19 +651,16 @@ void Game::drawPanelLights(Canvas& canvas, int64_t nowMs) {
     canvas.buttonLed(IN_PLAY, playing ? 2 : 1);
     canvas.buttonLed(IN_STOP, state_ == State::Title ? 0 : 1);
     canvas.buttonLed(IN_SHIFT, 1);
-    // TAP TEMPO is the metronome: bright on the beat.
     const double phase = state_ == State::Playing ? beatPhase() : std::fmod(engine_.positionBeats(), 1.0);
     canvas.buttonLed(IN_TAP_TEMPO, phase < 0.12 ? 2 : 0);
-    // On a level-up the right-hand column chases upwards.
     const bool chase = !banner_.empty() && nowMs < bannerUntil_ && banner_.rfind("LEVEL", 0) == 0;
     static const int column[] = {IN_MUTE, IN_ERASE, IN_CHOP, IN_LOOP, IN_SAMPLE_REC, IN_SEQ_REC};
     const int lit = chase ? static_cast<int>((nowMs / 70) % 6) : -1;
     for (int i = 0; i < 6; ++i) canvas.buttonLed(column[i], i == lit ? 2 : 0);
     for (int b : {IN_SEQ, IN_SAMPLE, IN_KNOB_FX, IN_PAD_FX, IN_PAD_BANK, IN_NOTE_REPEAT, IN_LEVELS, IN_SAMPLE_SELECT, IN_MINUS, IN_PLUS})
         canvas.buttonLed(b, 0);
-    // Meters: combo heat on the left, the kick on the right.
-    const int heat = playing ? std::min(5, combo_ / 6) : static_cast<int>(engine_.peakLeft() * 6);
-    canvas.meters(heat, static_cast<int>(engine_.kickEnvelope() * 5.99f));
+    const int rock = playing || state_ == State::Paused ? static_cast<int>(rock_ * 5.99f) : static_cast<int>(engine_.peakLeft() * 6);
+    canvas.meters(rock, static_cast<int>(engine_.kickEnvelope() * 5.99f));
     canvas.trackLed(playing || state_ == State::Paused ? (level_ - 1) % 8 : static_cast<int>((nowMs / 350) % 8));
 }
 

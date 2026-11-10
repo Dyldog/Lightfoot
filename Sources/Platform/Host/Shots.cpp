@@ -66,19 +66,21 @@ int runShots(const std::string& dir, int scale) {
     s.frame(loop);
 
     // A seeded run from level 3: play the jumps perfectly, then let the picture settle.
-    game.setStartLevel(3);
+    game.setDifficulty(Game::Medium);
     game.startGame(s.now, 7);
     s.run(loop, 16);
     bool perfectShot = false;
+    int64_t tapped = -1;
     for (int step = 0; step < 6000; ++step) {
         s.frame(loop);
         if (game.state() == Game::State::GameOver) break;
         const bool tapping = step < 1500; // then stop playing and let the run end
         const int64_t cue = game.cueSlot();
-        if (tapping && cue >= 0 && std::abs(game.pos() - static_cast<double>(cue)) < 0.02) {
+        if (tapping && cue >= 0 && cue != tapped && game.pos() >= static_cast<double>(cue) - 0.03) {
+            tapped = cue;
             const Slot& slot = game.track().at(cue);
-            loop.pushPadTap(Game::padIndex(slot.row, 0));
-            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));
+            loop.pushPadTap(Game::padIndex(3, Game::laneOf(slot.row)));
+            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(3, Game::laneOf(slot.row2)));
         }
         if (step == 700) s.save(loop, "02-playing");
         if (!perfectShot && game.combo() == 6) {
@@ -95,7 +97,7 @@ int runShots(const std::string& dir, int scale) {
             s.run(loop, 40);
         }
     }
-    std::fprintf(stderr, "shots: run ended with score %d combo %d lives %d state %d\n", game.score(), game.combo(), game.lives(), static_cast<int>(game.state()));
+    std::fprintf(stderr, "shots: run ended with score %d combo %d rock %.2f state %d\n", game.score(), game.combo(), static_cast<double>(game.rock()), static_cast<int>(game.state()));
     s.run(loop, 700);
     s.save(loop, "06-game-over");
     loop.pushButtonTap(IN_STOP);
@@ -117,13 +119,15 @@ int runShots(const std::string& dir, int scale) {
     s.save(loop, "08b-song-info");
     loop.pushButtonTap(IN_PLAY);
     s.run(loop, 60);
+    tapped = -1;
     for (int step = 0; step < 1300 && game.state() == Game::State::Playing; ++step) {
         s.frame(loop);
         const int64_t cue = game.cueSlot();
-        if (cue >= 0 && std::abs(game.pos() - static_cast<double>(cue)) < 0.03) {
+        if (cue >= 0 && cue != tapped && game.pos() >= static_cast<double>(cue) - 0.03) {
+            tapped = cue;
             const Slot slot = game.track().at(cue);
-            loop.pushPadTap(Game::padIndex(slot.row, 0));
-            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));
+            loop.pushPadTap(Game::padIndex(3, Game::laneOf(slot.row)));
+            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(3, Game::laneOf(slot.row2)));
         }
     }
     s.save(loop, "09-song-run");
