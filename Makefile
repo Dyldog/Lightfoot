@@ -35,7 +35,7 @@ HOST_SRC := $(shell find Sources/Platform/Host -name '*.cpp' 2>/dev/null)
 DEV_SRC  := $(shell find Sources/Platform/Device -name '*.cpp' 2>/dev/null)
 TEST_SRC := $(shell find Tests -name '*.cpp' 2>/dev/null)
 
-TK_COMMON := ui.c widgets.c input.c
+TK_COMMON := ui.c widgets.c input.c filebrowser.c
 TK_DEVICE := app.c screen.c surface.c
 TA_SRC    := pcm.c pcm_hw.c
 
@@ -104,7 +104,7 @@ test: $(TESTBIN) shots
 
 # The manual: MANUAL.md is the source, the PDF is generated and ships on the card.
 MANUAL_PDF := $(BUILD)/manual/$(PRODUCT)-Manual.pdf
-SCREENS := 00-title 01-how-to 02-playing 03-perfect 05-paused 06-game-over 07-scores
+SCREENS := 00-title 01-how-to 02-playing 03-perfect 05-paused 06-game-over 07-scores 08-songs 09-song-run
 
 screens: shots
 	@mkdir -p docs/screens

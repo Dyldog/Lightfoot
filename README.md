@@ -9,6 +9,11 @@ in the left column you hit it on the beat to jump. Only the lit pad counts.
 Two lit pads together are a long jump over a gap; a dim red pad is a decoy.
 Three lives, a new level every 32 beats, scores kept on the card.
 
+Drop a Standard MIDI File into `Lightfoot/Songs/` on the card and it becomes
+the music and the course: the tune picks the platforms, the file's tempo
+drives the scroll, and the run ends with SONG CLEAR. A demo tune is written
+there on first run.
+
 Everything is synthesised on the device: the music, the effects, the night
 skyline. The panel plays along: the pads are the game, TAP TEMPO is the
 metronome, the level meters show combo heat and the kick, the track LEDs the

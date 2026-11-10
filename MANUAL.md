@@ -40,6 +40,38 @@ the MPC is stock again. Firmware 1.3.0.12 only.
 
 ![A perfect, mid-jump, on a level change](docs/screens/03-perfect.png)
 
+## Your own songs
+
+A Standard MIDI File (`.mid`) can be the music and the course. Put files in
+`Lightfoot/Songs/` on the card, or browse to one anywhere on the card or the
+MPC's internal storage. A demo tune is written there the first time the game
+runs.
+
+![Songs: the card's Songs folder, the endless course, and the browser](docs/screens/08-songs.png)
+
+Press **SONGS** on the title (**B2**, or the wheel). The list shows the
+endless course first, then every song in the folder, then **Browse the
+card**. Press the wheel or **PLAY** on a song to start it straight away.
+
+What the game does with a file:
+
+- The tempo map and time signature come from the file. The course runs at
+  the song's tempo, speeding up and slowing down where the file does.
+- The tune is the channel with the most notes above the bass register. Each
+  note that lands on a beat becomes a jump, and its pitch picks the row:
+  the highest notes are the top row, the lowest the bottom row. A chord on
+  a beat becomes a long jump when the next beat is free.
+- Every channel is played by the built-in synth: drums on channel 10 onto
+  the kit, low notes as bass, long notes as pads, the rest as plucks. A file
+  without drums gets a kick and hats underneath so the beat stays audible.
+- Four beats count in, then the song starts at its first bar. Leading
+  silence in the file is skipped. The run ends with **SONG CLEAR** when the
+  song does, and the score goes on the table with the song's name.
+
+![A song run: the tune picks the platforms, the bar shows how far in you are](docs/screens/09-song-run.png)
+
+> **Tip:** Files with one clear melody line and a steady beat make the best courses. Fast runs of sixteenth notes are thinned to one jump a beat.
+
 ## Controls
 
 | Control | Action |
@@ -49,7 +81,7 @@ the MPC is stock again. Firmware 1.3.0.12 only.
 | **STOP** | Pause a run. From the pause screen, quit the run. |
 | **SHIFT** + **STOP** | Twice within three seconds: quit to stock, from anywhere. |
 | Wheel | Move through the title menu; press to choose. |
-| **B1** / **B2** / **B3** | On the title: Play, How to play, High scores. In a menu, B1 goes back. |
+| **B1** / **B2** / **B3** | On the title: Play, Songs, High scores. In a menu, B1 goes back. |
 | **K1** | Repaint the night: the whole palette follows the hue. |
 | **K2** | Open the music's filter. |
 | **K3** | Start level, 1 to 8, chosen on the title. Practise the fast end. |
@@ -83,6 +115,7 @@ reached, the best combo and the date. The title shows your best.
 
 | You see | Why | What to do |
 |---|---|---|
+| A song will not load | Not a format 0 or 1 MIDI file, or no notes in it | The log on the card says which; SMPTE-timed files are not supported |
 | Hits feel late or early | The codec adds about 20 ms before you hear the beat; the game allows for it, but headphones and speakers differ | Use the TAP TEMPO flash and the beat line under the runner as the reference, not the sound alone |
 | No sound | The output did not open | Check `autorun/user/lightfoot.log` on the card for the line beginning `alsa:` |
 | Pads trigger on their own when a knob is turned | A firm knob twist can shake a light tap out of the pads | Turn the knobs between runs; the title screen is the place for K1 and K3 |

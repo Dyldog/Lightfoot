@@ -96,6 +96,27 @@ int runShots(const std::string& dir, int scale) {
     loop.pushButtonTap(IN_B3);
     s.run(loop, 100);
     s.save(loop, "07-scores");
+    loop.pushButtonTap(IN_B1);
+    s.run(loop, 100);
+
+    // Songs: the list, then a run to the built-in demo tune.
+    loop.pushButtonTap(IN_B2);
+    s.run(loop, 100);
+    loop.push(panelmidi::encoder(1));
+    s.run(loop, 60);
+    s.save(loop, "08-songs");
+    loop.pushButtonTap(IN_ENCODER);
+    s.run(loop, 60);
+    for (int step = 0; step < 1300 && game.state() == Game::State::Playing; ++step) {
+        s.frame(loop);
+        const int64_t cue = game.cueSlot();
+        if (cue >= 0 && std::abs(game.beat() - static_cast<double>(cue)) < 0.02) {
+            const Slot slot = game.track().at(cue);
+            loop.pushPadTap(Game::padIndex(slot.row, 0));
+            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));
+        }
+    }
+    s.save(loop, "09-song-run");
     return s.failures ? 1 : 0;
 }
 

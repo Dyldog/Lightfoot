@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Audio/MidiFile.hpp"
+
 namespace lightfoot {
 
 namespace {
@@ -42,6 +44,54 @@ double AudioEngine::beat(int64_t nowMs) {
 void AudioEngine::resetBeat(double startBeat) {
     beat_ = startBeat;
     lastStep_ = static_cast<int>(std::floor(startBeat * 4)) - 1;
+    songRewind_ = true;
+}
+
+void AudioEngine::setSong(const MidiSong* song) {
+    song_ = song;
+    songRewind_ = true;
+}
+
+void AudioEngine::playNote(int channel, int note, int velocity, double lengthBeats, double beatSeconds) {
+    const float vel = std::clamp(velocity / 127.0f, 0.05f, 1.0f);
+    const double seconds = lengthBeats * beatSeconds;
+    if (channel == 9) {
+        // General MIDI drums onto the kit we have.
+        if (note == 35 || note == 36) {
+            Voice* v = allocate(Voice::Kick);
+            v->amp = 0.9f * vel;
+        } else if (note == 38 || note == 40 || note == 39 || note == 37) {
+            Voice* v = allocate(Voice::Clap);
+            v->amp = 0.45f * vel;
+        } else if (note == 46 || note == 49 || note == 51 || note == 57) {
+            Voice* v = allocate(Voice::Hat);
+            v->decay = 8;
+            v->amp = 0.22f * vel;
+        } else {
+            Voice* v = allocate(Voice::Hat);
+            v->decay = 55;
+            v->amp = 0.2f * vel;
+        }
+        return;
+    }
+    const double hz = midiHz(note);
+    if (note < 50) {
+        Voice* v = allocate(Voice::Bass);
+        v->freq = hz;
+        v->hold = std::max(0.05, seconds * 0.9);
+        v->amp = 0.4f * vel;
+    } else if (lengthBeats >= 1.5) {
+        Voice* v = allocate(Voice::Pad);
+        v->freq = hz;
+        v->attack = 0.04;
+        v->hold = seconds;
+        v->amp = 0.09f * vel;
+    } else {
+        Voice* v = allocate(Voice::Arp);
+        v->freq = hz;
+        v->decay = std::max(3.0, 9.0 - lengthBeats * 4);
+        v->amp = 0.14f * vel;
+    }
 }
 
 float AudioEngine::noise() {
@@ -158,6 +208,22 @@ void AudioEngine::onStep(int step) {
     const int level = std::max(1, intensity_.load());
     const bool play = mode == Mode::Play;
     const double beatSeconds = 60.0 / std::max(30.0, tempo_.load());
+    const MidiSong* song = play ? song_.load() : nullptr;
+    if (song) {
+        // The file carries the music. Keep a pulse under it only if it has no drums.
+        if (!song->hasDrums) {
+            if (inBar % 4 == 0) {
+                Voice* v = allocate(Voice::Kick);
+                v->amp = 0.8f;
+            }
+            if (inBar % 2 == 0) {
+                Voice* v = allocate(Voice::Hat);
+                v->decay = 55;
+                v->amp = 0.14f;
+            }
+        }
+        return;
+    }
     if (inBar == 0) bar_ = (step / 16) % 4;
     const int chord = ((bar_ % 4) + 4) % 4;
 
@@ -362,6 +428,18 @@ void AudioEngine::render(float* out, int frames) {
             if (step != lastStep_) {
                 lastStep_ = step;
                 onStep(step);
+            }
+            if (const MidiSong* song = mode == Mode::Play ? song_.load() : nullptr) {
+                if (songRewind_) {
+                    songRewind_ = false;
+                    songIndex_ = 0;
+                    while (songIndex_ < song->notes.size() && song->notes[songIndex_].beat < beat) ++songIndex_;
+                }
+                const double beatSeconds = 60.0 / std::max(30.0, tempo_.load());
+                while (songIndex_ < song->notes.size() && song->notes[songIndex_].beat <= beat) {
+                    const MidiNote& n = song->notes[songIndex_++];
+                    playNote(n.channel, n.note, n.velocity, n.length, beatSeconds);
+                }
             }
         }
         menuFade_ += (menuTarget - menuFade_) * 0.0005f;

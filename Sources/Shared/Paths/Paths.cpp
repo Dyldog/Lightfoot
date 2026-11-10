@@ -1,6 +1,10 @@
 #include "Shared/Paths/Paths.hpp"
 
+#include <dirent.h>
 #include <sys/stat.h>
+
+#include <algorithm>
+#include <cctype>
 #include <unistd.h>
 
 #include <cstdio>
@@ -49,6 +53,29 @@ bool makeDirs(const std::string& path) {
     }
     struct stat st;
     return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool isDirectory(const std::string& path) {
+    struct stat st;
+    return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+std::vector<std::string> listFiles(const std::string& dir, const std::string& suffix) {
+    std::vector<std::string> out;
+    DIR* d = ::opendir(dir.c_str());
+    if (!d) return out;
+    while (dirent* e = ::readdir(d)) {
+        std::string name = e->d_name;
+        if (name.empty() || name[0] == '.' || name.size() < suffix.size()) continue;
+        std::string tail = name.substr(name.size() - suffix.size());
+        std::transform(tail.begin(), tail.end(), tail.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (tail != suffix) continue;
+        if (isDirectory(join(dir, name))) continue;
+        out.push_back(name);
+    }
+    ::closedir(d);
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 bool readFile(const std::string& path, std::string& out) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace lightfoot {
@@ -26,6 +27,14 @@ public:
     static constexpr double kMaxTempo = 165;
 
     explicit Track(uint32_t seed = 1, int startLevel = 1);
+    /// A fixed course: the melody of a song, one cue per beat at most, the row
+    /// following the pitch. Beyond the end the course is plain running.
+    static Track fromSong(const class MidiSong& song);
+
+    bool finite() const { return finite_; }
+    int64_t length() const { return length_; }
+    int beatsPerBar() const { return beatsPerBar_; }
+    const std::string& songName() const { return songName_; }
 
     /// By value: the course grows as it is read, so a reference would not survive.
     Slot at(int64_t index);
@@ -44,6 +53,10 @@ private:
     int startLevel_;
     std::vector<Slot> slots_;
     int lastCueAt_ = -100;
+    bool finite_ = false;
+    int64_t length_ = 0;
+    int beatsPerBar_ = 4;
+    std::string songName_;
 };
 
 } // namespace lightfoot

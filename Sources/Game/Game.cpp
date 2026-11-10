@@ -9,6 +9,12 @@
 #include "Shared/Json/Json.hpp"
 #include "Shared/Paths/Paths.hpp"
 
+#include <unistd.h>
+
+extern "C" {
+#include "filebrowser.h"
+}
+
 namespace lightfoot {
 
 namespace {
@@ -29,9 +35,17 @@ const char* Game::version() {
     return LIGHTFOOT_VERSION;
 }
 
+Game::~Game() = default;
+
+std::string Game::songsDir() {
+    return paths::join(paths::dataDir(), "Songs");
+}
+
 Game::Game() : palette_(Palette::make(0)) {
     scores_.load();
     loadSettings();
+    ensureDemoSong();
+    refreshSongList();
     palette_ = Palette::make(hue_);
     engine_.setTempo(kMenuTempo);
     engine_.setMode(AudioEngine::Mode::Menu);
@@ -54,6 +68,65 @@ void Game::saveSettings() const {
     j.set("startLevel", startLevel_);
     paths::makeDirs(paths::dataDir());
     paths::writeFileAtomic(paths::join(paths::dataDir(), "settings.json"), j.dump(2) + "\n");
+}
+
+void Game::ensureDemoSong() {
+    // A song to try before any are copied over: written once, never overwritten.
+    paths::makeDirs(songsDir());
+    if (paths::listFiles(songsDir(), ".mid").empty() && paths::listFiles(songsDir(), ".midi").empty())
+        MidiSong::writeDemo(paths::join(songsDir(), "Lightfoot Demo.mid"));
+}
+
+void Game::refreshSongList() {
+    songFiles_ = paths::listFiles(songsDir(), ".mid");
+    for (const std::string& f : paths::listFiles(songsDir(), ".midi")) songFiles_.push_back(f);
+    std::sort(songFiles_.begin(), songFiles_.end());
+    songCursor_ = std::clamp(songCursor_, 0, static_cast<int>(songFiles_.size()) + 1);
+}
+
+bool Game::loadSong(const std::string& path) {
+    std::string error;
+    std::shared_ptr<MidiSong> song = MidiSong::load(path, &error);
+    if (!song) {
+        banner_ = "CAN'T READ THAT FILE";
+        bannerUntil_ = lastFrameMs_ + 2000;
+        std::fprintf(stderr, "song: %s: %s\n", path.c_str(), error.c_str());
+        return false;
+    }
+    song->trimLeadIn(4);
+    loadedSongs_.push_back(song);
+    if (loadedSongs_.size() > 8) loadedSongs_.erase(loadedSongs_.begin());
+    song_ = song;
+    std::fprintf(stderr, "song: %s, %zu notes, %.0f BPM, %.0f beats, melody channel %d, drums %d\n", song->name.c_str(), song->notes.size(),
+                 song->tempoAt(0), song->lengthBeats, song->melodyChannel + 1, song->hasDrums ? 1 : 0);
+    return true;
+}
+
+void Game::openBrowser() {
+    browser_ = std::make_unique<struct ui_filebrowser>();
+    browserTitle_ = "LOAD A SONG";
+    static const char* extensions[] = {".mid", ".midi", nullptr};
+    struct ui_filebrowser_config cfg{};
+    cfg.title = browserTitle_.c_str();
+    cfg.action_label = "PLAY";
+    cfg.options = UI_FB_OPT_HIDE_DOTFILES | UI_FB_OPT_SHOW_SIZE;
+    cfg.extensions = extensions;
+    auto absolute = [](const std::string& p) {
+        if (!p.empty() && p[0] == '/') return p;
+        char buf[4096];
+        if (!::getcwd(buf, sizeof buf)) return p;
+        return paths::join(buf, p);
+    };
+    if (!paths::isDirectory("/data") && !paths::isDirectory("/media")) {
+        browserExternal_ = absolute(paths::cardRoot());
+        const char* home = std::getenv("HOME");
+        browserInternal_ = home ? home : "/";
+        cfg.external_path = browserExternal_.c_str();
+        cfg.internal_path = browserInternal_.c_str();
+    }
+    browserStart_ = absolute(songsDir());
+    if (paths::isDirectory(browserStart_)) cfg.initial_path = browserStart_.c_str();
+    ui_filebrowser_init(browser_.get(), &cfg);
 }
 
 void Game::setHue(float hue) {
@@ -94,6 +167,8 @@ void Game::setState(State s, int64_t nowMs) {
     case State::Title:
     case State::HowTo:
     case State::Scores:
+    case State::Songs:
+    case State::Browse:
     case State::GameOver:
         engine_.setPaused(false);
         engine_.setMode(AudioEngine::Mode::Menu);
@@ -112,11 +187,18 @@ void Game::setState(State s, int64_t nowMs) {
 
 void Game::startGame(int64_t nowMs, uint32_t seed) {
     if (seed == 0) seed = static_cast<uint32_t>(nowMs * 2654435761u) | 1u;
-    track_ = Track(seed, startLevel_);
+    songComplete_ = false;
+    if (song_) {
+        track_ = Track::fromSong(*song_);
+        engine_.setSong(song_.get());
+    } else {
+        track_ = Track(seed, startLevel_);
+        engine_.setSong(nullptr);
+    }
     score_ = combo_ = maxCombo_ = 0;
     perfects_ = goods_ = misses_ = slips_ = 0;
     lives_ = 3;
-    level_ = startLevel_;
+    level_ = song_ ? 1 : startLevel_;
     slot_ = -static_cast<int64_t>(kCountIn) - 1;
     cueSlot_ = -1;
     resolvedUpTo_ = -1;
@@ -137,7 +219,7 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
     engine_.resetBeat(-kCountIn);
     beat_ = -kCountIn;
     setState(State::Playing, nowMs);
-    applyLevel(startLevel_, false, nowMs);
+    applyLevel(level_, false, nowMs);
     engine_.setBrightness(0);
     engine_.trigger(Sfx::Start);
     saveSettings();
@@ -145,11 +227,12 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
 
 void Game::applyLevel(int level, bool announce, int64_t nowMs) {
     level_ = level;
-    engine_.setTempo(track_.tempoFor(level) * assist_);
+    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) : track_.tempoFor(level)) * assist_);
     engine_.setIntensity(level);
     if (announce) {
         char text[48];
-        std::snprintf(text, sizeof text, "LEVEL %d   %.0f BPM", level, track_.tempoFor(level));
+        if (song_) std::snprintf(text, sizeof text, "LEVEL %d", level);
+        else std::snprintf(text, sizeof text, "LEVEL %d   %.0f BPM", level, track_.tempoFor(level));
         banner_ = text;
         bannerUntil_ = nowMs + 1800;
         flash_ = 0.45f;
@@ -159,9 +242,10 @@ void Game::applyLevel(int level, bool announce, int64_t nowMs) {
 }
 
 void Game::endGame(int64_t nowMs) {
-    finalRank_ = score_ > 0 ? scores_.add(score_, level_, maxCombo_) : -1;
+    finalRank_ = score_ > 0 ? scores_.add(score_, level_, maxCombo_, song_ ? song_->name : std::string()) : -1;
     setState(State::GameOver, nowMs);
-    engine_.trigger(Sfx::GameOver);
+    engine_.setSong(nullptr);
+    engine_.trigger(songComplete_ ? Sfx::LevelUp : Sfx::GameOver);
     banner_.clear();
 }
 
@@ -216,6 +300,8 @@ void Game::update(Canvas& canvas, const Frame& in, int64_t nowMs) {
     }
     switch (state_) {
     case State::Title: updateTitle(canvas, in, nowMs); break;
+    case State::Songs: updateSongs(canvas, in, nowMs); break;
+    case State::Browse: updateBrowser(canvas, in, nowMs); break;
     case State::HowTo:
     case State::Scores:
         if (in.pressed(IN_PLAY)) startGame(nowMs);
@@ -247,7 +333,7 @@ void Game::update(Canvas& canvas, const Frame& in, int64_t nowMs) {
 
 void Game::updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs) {
     (void)canvas;
-    constexpr int kItems = 4;
+    constexpr int kItems = 5;
     if (const int d = in.encoder()) {
         menuCursor_ = (menuCursor_ + d % kItems + kItems) % kItems;
         engine_.trigger(Sfx::Tick);
@@ -257,7 +343,8 @@ void Game::updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs) {
         return;
     }
     if (in.pressed(IN_B2)) {
-        setState(State::HowTo, nowMs);
+        refreshSongList();
+        setState(State::Songs, nowMs);
         engine_.trigger(Sfx::Select);
         return;
     }
@@ -270,8 +357,12 @@ void Game::updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs) {
         engine_.trigger(Sfx::Select);
         switch (menuCursor_) {
         case 0: startGame(nowMs); break;
-        case 1: setState(State::HowTo, nowMs); break;
-        case 2: setState(State::Scores, nowMs); break;
+        case 1:
+            refreshSongList();
+            setState(State::Songs, nowMs);
+            break;
+        case 2: setState(State::HowTo, nowMs); break;
+        case 3: setState(State::Scores, nowMs); break;
         default: quit_ = true; break;
         }
         return;
@@ -286,13 +377,72 @@ void Game::updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs) {
         }
 }
 
+void Game::updateSongs(Canvas& canvas, const Frame& in, int64_t nowMs) {
+    (void)canvas;
+    // Rows: endless course, each file, browse the card.
+    const int rows = static_cast<int>(songFiles_.size()) + 2;
+    if (const int d = in.encoder()) {
+        songCursor_ = std::clamp(songCursor_ + d, 0, rows - 1);
+        engine_.trigger(Sfx::Tick);
+    }
+    if (in.pressed(IN_B1) || in.pressed(IN_STOP)) {
+        engine_.trigger(Sfx::Select);
+        setState(State::Title, nowMs);
+        return;
+    }
+    const bool choose = in.encoderPressed() || in.pressed(IN_B2) || in.pressed(IN_B3) || in.pressed(IN_PLAY);
+    if (!choose) return;
+    engine_.trigger(Sfx::Select);
+    if (songCursor_ == 0) {
+        song_.reset();
+        if (in.pressed(IN_PLAY)) startGame(nowMs);
+        else setState(State::Title, nowMs);
+        return;
+    }
+    if (songCursor_ == rows - 1) {
+        openBrowser();
+        setState(State::Browse, nowMs);
+        return;
+    }
+    const std::string path = paths::join(songsDir(), songFiles_[static_cast<size_t>(songCursor_ - 1)]);
+    if (loadSong(path)) startGame(nowMs);
+}
+
+void Game::updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs) {
+    if (!browser_) {
+        setState(State::Songs, nowMs);
+        return;
+    }
+    struct ui_filebrowser_style style = ui_filebrowser_style_default();
+    style.bg = 0x0b0914;
+    style.box = palette_.platform;
+    style.text = palette_.text;
+    style.text_dim = palette_.textDim;
+    style.drive_color = palette_.accent;
+    style.highlight = palette_.accent;
+    style.highlight_fill = Palette::mix(palette_.platform, palette_.accent, 60);
+    style.title = palette_.accent;
+    style.border = palette_.textDim;
+    const int rc = ui_filebrowser(canvas.raw(), 0, 0, Canvas::width, Canvas::height, browser_.get(), style, &in.raw());
+    if (rc == UI_FB_CANCEL) {
+        browser_.reset();
+        setState(State::Songs, nowMs);
+    } else if (rc == UI_FB_SELECT && !browser_->selected_is_dir) {
+        const std::string path = browser_->selected_path;
+        if (loadSong(path)) {
+            browser_.reset();
+            startGame(nowMs);
+        }
+    }
+}
+
 void Game::updatePlaying(Canvas& canvas, const Frame& in, int64_t nowMs) {
     (void)canvas;
     if (in.pressed(IN_PLAY) || in.pressed(IN_STOP)) {
         setState(State::Paused, nowMs);
         return;
     }
-    engine_.setTempo(track_.tempoFor(level_) * assist_);
+    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) : track_.tempoFor(level_)) * assist_);
     advance(nowMs);
     if (state_ != State::Playing) return; // the run ended inside advance
     handlePads(in, nowMs);
@@ -320,6 +470,11 @@ void Game::advance(int64_t nowMs) {
         landed_ = true;
         engine_.trigger(Sfx::Land);
         spawnBurst(96, static_cast<float>(rowY(runnerRow_)), palette_.row[runnerRow_], 8, 40);
+    }
+    if (track_.finite() && slot_ >= track_.length() + 2 && cueSlot_ < 0) {
+        songComplete_ = true;
+        endGame(nowMs);
+        return;
     }
     if (fallStart_ >= 0 && beat_ >= fallStart_ + 0.8) fallStart_ = -1;
     findNextCue();

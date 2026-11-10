@@ -76,6 +76,8 @@ void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
     case State::Title: drawTitle(canvas, nowMs); break;
     case State::HowTo: drawHowTo(canvas, nowMs); break;
     case State::Scores: drawScores(canvas, nowMs); break;
+    case State::Songs: drawSongs(canvas, nowMs); break;
+    case State::Browse: break; // the toolkit browser drew itself during update
     case State::Playing: drawPlay(canvas, nowMs); break;
     case State::Paused:
         drawPlay(canvas, nowMs);
@@ -334,8 +336,18 @@ void Game::drawHud(Canvas& canvas, int64_t nowMs) {
     std::snprintf(buf, sizeof buf, "%07d", score_);
     canvas.textScaled(6, 5, buf, 0x000000, 2, 120);
     canvas.textScaled(4, 3, buf, p.white, 2);
-    std::snprintf(buf, sizeof buf, "LEVEL %d   %.0f BPM%s", level_, track_.tempoFor(level_) * assist_, assist_ < 0.999f ? "   ASSIST" : "");
-    canvas.text(5, 37, buf, p.textDim, Font::Small);
+    if (song_) {
+        canvas.text(5, 37, song_->name.substr(0, 20), p.textDim, Font::Small);
+        // Progress through the song, with the tempo beside it.
+        const double done = track_.length() > 0 ? std::clamp(static_cast<double>(slot_) / static_cast<double>(track_.length()), 0.0, 1.0) : 0.0;
+        canvas.fillAlpha({5, 52, 70, 3}, p.textDim, 90);
+        canvas.fill({5, 52, static_cast<int>(70 * done), 3}, p.accent);
+        std::snprintf(buf, sizeof buf, "%.0f BPM%s", engine_.tempo(), assist_ < 0.999f ? " ASSIST" : "");
+        canvas.text(80, 48, buf, p.textDim, Font::Small);
+    } else {
+        std::snprintf(buf, sizeof buf, "LEVEL %d   %.0f BPM%s", level_, track_.tempoFor(level_) * assist_, assist_ < 0.999f ? "   ASSIST" : "");
+        canvas.text(5, 37, buf, p.textDim, Font::Small);
+    }
 
     // Lives: three lights top right.
     for (int i = 0; i < 3; ++i) {
@@ -433,11 +445,11 @@ void Game::drawTitle(Canvas& canvas, int64_t nowMs) {
         canvas.textCentered({0, 83, Canvas::width, 12}, tag, p.text, Font::Small);
     }
 
-    static const char* const items[4] = {"PLAY", "HOW TO PLAY", "HIGH SCORES", "QUIT TO STOCK"};
-    const Rect panel{176, 104, 136, 72};
+    static const char* const items[5] = {"PLAY", "SONGS", "HOW TO PLAY", "HIGH SCORES", "QUIT TO STOCK"};
+    const Rect panel{176, 100, 136, 88};
     canvas.fillAlpha(panel, 0x000000, 140);
     canvas.hline(panel.x, panel.right() - 1, panel.y, Palette::mix(p.accent, 0x000000, 100));
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         const bool sel = i == menuCursor_;
         const int y = panel.y + 6 + i * 16;
         if (sel) {
@@ -448,10 +460,11 @@ void Game::drawTitle(Canvas& canvas, int64_t nowMs) {
     }
     // Soft keys and the footer.
     canvas.text(26, 1, "PLAY", p.textDim, Font::Small);
-    canvas.text(118, 1, "HOW TO", p.textDim, Font::Small);
+    canvas.text(124, 1, "SONGS", p.textDim, Font::Small);
     canvas.text(236, 1, "SCORES", p.textDim, Font::Small);
-    char buf[64];
-    std::snprintf(buf, sizeof buf, "BEST %d     START LEVEL %d (K3)     K1 COLOUR", scores_.best(), startLevel_);
+    char buf[96];
+    if (song_) std::snprintf(buf, sizeof buf, "SONG  %.20s     BEST %d", song_->name.c_str(), scores_.best());
+    else std::snprintf(buf, sizeof buf, "ENDLESS     BEST %d     START LEVEL %d (K3)", scores_.best(), startLevel_);
     canvas.textCentered({0, 226, Canvas::width, 12}, buf, Palette::mix(p.textDim, p.white, 60), Font::Small);
     const float blink = 0.5f + 0.5f * std::sin(nowMs * 0.005f);
     canvas.textCentered({0, 210, Canvas::width, 12}, "PRESS PLAY", Palette::mix(p.textDim, p.white, static_cast<int>(blink * 255)), Font::Small);
@@ -515,14 +528,53 @@ void Game::drawScores(Canvas& canvas, int64_t nowMs) {
     canvas.textScaled(10, 6, "HIGH SCORES", p.white, 1);
     const auto& list = scores_.entries();
     if (list.empty()) canvas.text(10, 36, "No runs yet. Press PLAY.", p.textDim, Font::Small);
-    else canvas.text(10, 30, "#    SCORE     LEVEL  COMBO   DATE", p.textDim, Font::Small);
+    else canvas.text(10, 30, "#    SCORE   LV  COMBO  SONG          DATE", p.textDim, Font::Small);
     for (size_t i = 0; i < list.size() && i < 8; ++i) {
-        char line[64];
-        std::snprintf(line, sizeof line, "%zu    %7d    %2d     %3d    %s", i + 1, list[i].score, list[i].level, list[i].combo, list[i].date.c_str());
+        char line[96];
+        std::snprintf(line, sizeof line, "%zu  %7d   %2d   %3d   %-12.12s  %s", i + 1, list[i].score, list[i].level, list[i].combo,
+                      list[i].song.empty() ? "endless" : list[i].song.c_str(), list[i].date.c_str());
         const bool fresh = static_cast<int>(i) == finalRank_ && state_ == State::Scores;
         canvas.text(10, 46 + static_cast<int>(i) * 14, line, fresh ? p.accentHot : i == 0 ? p.white : p.text, Font::Small);
     }
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK     PLAY TO START", p.textDim, Font::Small);
+}
+
+void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
+    const Palette& p = palette_;
+    beat_ = engine_.positionBeats();
+    drawSky(canvas, nowMs, beat_ * kSlotW);
+    canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 150);
+    canvas.textScaled(10, 6, "SONGS", p.white, 1);
+    canvas.textRight({0, 8, Canvas::width - 10, 12}, "Lightfoot/Songs on the card", p.textDim, Font::Small);
+    const int rows = static_cast<int>(songFiles_.size()) + 2;
+    const int visible = 12;
+    const int first = std::max(0, songCursor_ - visible + 2);
+    for (int i = first; i < rows && i - first < visible; ++i) {
+        const int y = 30 + (i - first) * 14;
+        const bool sel = i == songCursor_;
+        std::string label;
+        uint32_t color = p.text;
+        if (i == 0) {
+            label = "ENDLESS COURSE";
+            color = p.row[3];
+        } else if (i == rows - 1) {
+            label = "BROWSE THE CARD...";
+            color = p.accentHot;
+        } else {
+            label = songFiles_[static_cast<size_t>(i - 1)];
+            const std::string::size_type dot = label.rfind('.');
+            if (dot != std::string::npos) label = label.substr(0, dot);
+            if (song_ && label == song_->name) color = p.accent;
+        }
+        if (sel) {
+            canvas.fillAlpha({6, y - 2, Canvas::width - 12, 14}, p.accent, 70);
+            canvas.text(10, y, ">", p.accentHot, Font::Small);
+        }
+        canvas.textClipped({0, y, Canvas::width - 10, 12}, 22, y, label, sel ? p.white : color, Font::Small);
+    }
+    const char* hint = songCursor_ == 0 ? "The generated course, levels and all." : songCursor_ == rows - 1 ? "Any .mid on the SD card or internal storage." : "Press to play. The tune picks the platforms.";
+    canvas.textCentered({0, 208, Canvas::width, 12}, hint, p.textDim, Font::Small);
+    canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK     PRESS OR PLAY TO CHOOSE", p.textDim, Font::Small);
 }
 
 void Game::drawPaused(Canvas& canvas, int64_t nowMs) {
@@ -539,9 +591,9 @@ void Game::drawGameOver(Canvas& canvas, int64_t nowMs) {
     const int64_t age = nowMs - stateSince_;
     canvas.fillAlpha(kScreen, 0x000000, static_cast<int>(std::min<int64_t>(170, age / 3)));
     const bool best = finalRank_ == 0;
-    const char* word = best ? "NEW BEST" : "GAME OVER";
+    const char* word = songComplete_ ? "SONG CLEAR" : best ? "NEW BEST" : "GAME OVER";
     const int w = Canvas::scaledWidth(word, 2);
-    canvas.glow(160, 70, 70, best ? p.accent : p.danger, 60);
+    canvas.glow(160, 70, 70, best || songComplete_ ? p.accent : p.danger, 60);
     canvas.textScaled((Canvas::width - w) / 2 + 2, 56, word, 0x000000, 2, 150);
     canvas.textScaled((Canvas::width - w) / 2, 54, word, best ? p.accentHot : p.white, 2);
     char buf[64];

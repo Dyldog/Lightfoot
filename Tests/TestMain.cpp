@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Audio/AudioEngine.hpp"
+#include "Audio/MidiFile.hpp"
 #include "Game/Game.hpp"
 #include "Game/Scores.hpp"
 #include "Game/Track.hpp"
@@ -218,6 +219,88 @@ void testTwinNeedsBothPads() {
     unsetenv("LIGHTFOOT_ROOT");
 }
 
+void testMidiSong() {
+    setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
+    lightfoot::paths::makeDirs("build/test-card/Lightfoot/Songs");
+    const std::string path = "build/test-card/Lightfoot/Songs/Demo.mid";
+    check(lightfoot::MidiSong::writeDemo(path), "demo MIDI written");
+    std::string error;
+    auto song = lightfoot::MidiSong::load(path, &error);
+    check(song != nullptr, "demo MIDI parses");
+    if (!song) {
+        std::printf("  error: %s\n", error.c_str());
+        return;
+    }
+    check(song->name == "Lightfoot Demo", "track name read");
+    check(std::fabs(song->tempoAt(0) - 112.0) < 0.1, "tempo meta read");
+    check(song->beatsPerBar == 4, "time signature read");
+    check(song->hasDrums, "drums on channel 10 found");
+    check(song->melodyChannel == 0, "the tune is picked as the melody, not the bass");
+    check(std::fabs(song->lengthBeats - 64.0) < 0.5, "16 bars long");
+    int tuneNotes = 0;
+    for (const auto& n : song->notes)
+        if (n.channel == 0) ++tuneNotes;
+    check(tuneNotes == 14 * 4 - 4, "every tune note with a length");
+    // Running status, a note held past the end, and junk are all handled.
+    std::vector<uint8_t> junk = {'M', 'T', 'h', 'x'};
+    check(lightfoot::MidiSong::parse(junk, &error) == nullptr, "junk is refused");
+    std::vector<uint8_t> running = {'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 'M', 'T', 'r', 'k', 0, 0, 0, 12,
+                                    0x00, 0x90, 60, 100, 0x60, 60, 0, 0x60, 64, 100, 0x00, 0xff};
+    auto rs = lightfoot::MidiSong::parse(running);
+    check(rs && rs->notes.size() == 2 && std::fabs(rs->notes[0].length - 1.0) < 1e-9 && std::fabs(rs->notes[1].beat - 2.0) < 1e-9, "running status and an unreleased note");
+
+    // The course follows the tune: cues on beats where the tune plays, rows from pitch.
+    lightfoot::Track course = lightfoot::Track::fromSong(*song);
+    check(course.finite() && course.length() >= 64, "a song course is finite and song-length");
+    int cues = 0;
+    for (int64_t i = 0; i < course.length(); ++i) cues += course.at(i).cue ? 1 : 0;
+    check(cues >= 20 && cues <= 56, "the tune gives a playable number of jumps");
+    check(!course.at(2).cue && course.at(course.length() + 50).cue == false, "no jumps before bar 2 or after the end");
+    // Highest tune note is the top row, lowest the bottom row.
+    int topRow = 9, bottomRow = -1;
+    for (int64_t i = 0; i < course.length(); ++i)
+        if (course.at(i).cue) {
+            topRow = std::min(topRow, course.at(i).row);
+            bottomRow = std::max(bottomRow, course.at(i).row);
+        }
+    check(topRow == 0 && bottomRow == 3, "the melody spans all four rows");
+
+    // Playing a song: notes come out of the synth, and the run ends with SONG CLEAR.
+    lightfoot::Game game;
+    check(game.loadSong(path), "the game loads the song");
+    lightfoot::HostLoop loop(game);
+    int64_t now = 1000;
+    loop.step(now);
+    game.startGame(now, 1);
+    check(game.engine().song() != nullptr && game.track().finite(), "a song run uses the song and its course");
+    std::vector<float> out(256 * 2);
+    game.engine().setAttached(true);
+    game.engine().setMode(lightfoot::AudioEngine::Mode::Play);
+    float peak = 0;
+    for (int b = 0; b < 600; ++b) {
+        game.engine().render(out.data(), 256);
+        for (float v : out) peak = std::max(peak, std::fabs(v));
+    }
+    check(peak > 0.05f, "the song makes sound");
+    game.engine().setAttached(false);
+    // Let the run go on unattended: misses end it before the song does, so the
+    // completion path is tested with a tapper.
+    while (game.state() == lightfoot::Game::State::Playing && now < 600000) {
+        now += 16;
+        const int64_t cue = game.cueSlot();
+        if (cue >= 0 && std::fabs(game.beat() - static_cast<double>(cue)) < 0.03) {
+            const lightfoot::Slot s = game.track().at(cue);
+            loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
+            if (s.row2 >= 0) loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(s.row2, 0)));
+        }
+        loop.step(now);
+    }
+    check(game.state() == lightfoot::Game::State::GameOver && game.songComplete(), "playing the whole song ends in SONG CLEAR");
+    check(game.lives() == 3, "a perfectly tapped song loses no lives");
+    check(game.scores().entries().front().song == "Lightfoot Demo", "the score remembers the song");
+    unsetenv("LIGHTFOOT_ROOT");
+}
+
 void testMenuFlow() {
     setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
     lightfoot::Game game;
@@ -228,7 +311,7 @@ void testMenuFlow() {
     loop.pushButtonTap(IN_B2);
     loop.step(now += 16);
     loop.step(now += 16);
-    check(game.state() == lightfoot::Game::State::HowTo, "B2 opens how to play");
+    check(game.state() == lightfoot::Game::State::Songs, "B2 opens the songs list");
     loop.pushButtonTap(IN_B1);
     loop.step(now += 16);
     loop.step(now += 16);
@@ -261,6 +344,7 @@ int main() {
     testJudgeAndScore();
     testTwinNeedsBothPads();
     testMenuFlow();
+    testMidiSong();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

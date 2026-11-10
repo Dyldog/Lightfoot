@@ -2,16 +2,19 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "Audio/AudioEngine.hpp"
+#include "Audio/MidiFile.hpp"
 #include "Game/Palette.hpp"
 #include "Game/Scores.hpp"
 #include "Game/Track.hpp"
 
 struct ui;
 struct input;
+struct ui_filebrowser;
 
 namespace lightfoot {
 
@@ -26,10 +29,11 @@ class Frame;
 /// decoys. Three lives, levels every 32 beats, scores on the card.
 class Game {
 public:
-    enum class State { Title, HowTo, Scores, Playing, Paused, GameOver };
+    enum class State { Title, HowTo, Scores, Songs, Browse, Playing, Paused, GameOver };
     enum class Hit { None, Perfect, Good, Early, Slip, Miss };
 
     Game();
+    ~Game();
 
     /// Toolkit frame callback: draws one frame and handles the panel.
     int frame(ui* u, const input* in);
@@ -56,6 +60,12 @@ public:
     int startLevel() const { return startLevel_; }
     void setStartLevel(int level);
     void requestQuit() { quit_ = true; }
+    /// Songs: a Standard MIDI File becomes the music and the course.
+    bool loadSong(const std::string& path);
+    void clearSong() { song_.reset(); }
+    const MidiSong* song() const { return song_.get(); }
+    bool songComplete() const { return songComplete_; }
+    static std::string songsDir();
     /// Pad index (0 is pad 1, bottom-left) for a grid row (0 top) and column (0 left).
     static int padIndex(int row, int col) { return (3 - row) * 4 + col; }
     static int padRow(int pad) { return 3 - pad / 4; }
@@ -80,6 +90,11 @@ private:
     // Flow
     void update(Canvas& canvas, const Frame& in, int64_t nowMs);
     void updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs);
+    void updateSongs(Canvas& canvas, const Frame& in, int64_t nowMs);
+    void updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs);
+    void refreshSongList();
+    void ensureDemoSong();
+    void openBrowser();
     void updatePlaying(Canvas& canvas, const Frame& in, int64_t nowMs);
     void handleKnobs(const Frame& in);
     void handlePads(const Frame& in, int64_t nowMs);
@@ -100,6 +115,7 @@ private:
     void drawTitle(Canvas& canvas, int64_t nowMs);
     void drawHowTo(Canvas& canvas, int64_t nowMs);
     void drawScores(Canvas& canvas, int64_t nowMs);
+    void drawSongs(Canvas& canvas, int64_t nowMs);
     void drawGameOver(Canvas& canvas, int64_t nowMs);
     void drawPaused(Canvas& canvas, int64_t nowMs);
     void drawSky(Canvas& canvas, int64_t nowMs, double scroll);
@@ -135,6 +151,15 @@ private:
     int64_t quitArmedMs_ = 0;
     float assist_ = 1.0f;       // fader: 0.75 slow and half points .. 1.0 full speed
     bool knobsSeen_[3] = {false, false, false};
+
+    // Songs
+    std::shared_ptr<MidiSong> song_;                    // the song a run plays to, or null for endless
+    std::vector<std::shared_ptr<MidiSong>> loadedSongs_; // kept alive: the audio thread may still read one
+    bool songComplete_ = false;
+    std::vector<std::string> songFiles_;
+    int songCursor_ = 0;
+    std::unique_ptr<ui_filebrowser> browser_;
+    std::string browserTitle_, browserExternal_, browserInternal_, browserStart_;
 
     // The run
     double beat_ = 0;            // heard beat: the engine's clock less output latency

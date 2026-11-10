@@ -3,8 +3,11 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 namespace lightfoot {
+
+class MidiSong;
 
 /// One-shot sounds the game asks for. Triggered from the UI thread, rendered
 /// on the audio thread.
@@ -48,6 +51,11 @@ public:
     /// 0..1 extra brightness on top of the level's own.
     void setBrightness(float amount) { brightness_ = amount; }
     void trigger(Sfx sfx);
+    /// Play this song's notes from the beat clock instead of the procedural
+    /// layers (the kick and hats stay when the song has no drums). Null
+    /// returns to the procedural music. The song must outlive its use.
+    void setSong(const MidiSong* song);
+    const MidiSong* song() const { return song_.load(); }
 
     // Meters (last rendered block)
     float peakLeft() const { return peakLeft_; }
@@ -81,7 +89,7 @@ private:
     void startSfx(Sfx sfx);
     float noise();
 
-    static constexpr int kVoices = 40;
+    static constexpr int kVoices = 72;
     static constexpr int kQueue = 32;
 
     int sampleRate_;
@@ -106,6 +114,10 @@ private:
     float busLp_ = 0, busLpR_ = 0;
     float duck_ = 0;
     float menuFade_ = 0;
+    std::atomic<const MidiSong*> song_{nullptr};
+    std::atomic<bool> songRewind_{true};
+    size_t songIndex_ = 0;
+    void playNote(int channel, int note, int velocity, double lengthBeats, double beatSeconds);
 };
 
 } // namespace lightfoot
