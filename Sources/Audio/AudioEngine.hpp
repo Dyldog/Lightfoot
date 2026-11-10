@@ -51,6 +51,11 @@ public:
     /// 0..1 extra brightness on top of the level's own.
     void setBrightness(float amount) { brightness_ = amount; }
     void trigger(Sfx sfx);
+    /// Sound one of the song's notes now: the player hit its pad.
+    void noteOn(int channel, int note, int velocity, double lengthBeats);
+    /// While false the melody's automatic notes (the ones thinned out of the
+    /// course) stay silent too: a miss leaves a hole until the next hit.
+    void setMelodyGate(bool open) { melodyGate_ = open; }
     /// Play this song's notes from the beat clock instead of the procedural
     /// layers (the kick and hats stay when the song has no drums). Null
     /// returns to the procedural music. The song must outlive its use.
@@ -106,7 +111,13 @@ private:
     int64_t lastClockMs_ = 0;
 
     std::array<Voice, kVoices> voices_{};
-    std::array<int, kQueue> queue_{};
+    struct Trigger {
+        int sfx = -1;      // a Sfx, or -1 for a note
+        int channel = 0, note = 60, velocity = 100;
+        float lengthBeats = 0.5f;
+    };
+    std::array<Trigger, kQueue> queue_{};
+    std::atomic<bool> melodyGate_{true};
     std::atomic<int> queueHead_{0}, queueTail_{0};
     int lastStep_ = -1;
     int bar_ = 0;

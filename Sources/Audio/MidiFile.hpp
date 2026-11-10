@@ -13,6 +13,7 @@ struct MidiNote {
     int channel = 0;        // 0..15; 9 is drums
     int note = 60;
     int velocity = 100;
+    bool manual = false;    // the player sounds this note by hitting its pad; the engine stays quiet
 };
 
 struct TempoPoint {

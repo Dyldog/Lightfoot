@@ -1,6 +1,7 @@
 // Lightfoot unit tests: the course generator, the judge, scoring, the clock,
 // the synth, the pad mapping and the score table. `make test` runs them after
 // the screenshot suite.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -250,18 +251,32 @@ void testMidiSong() {
     check(rs && rs->notes.size() == 2 && std::fabs(rs->notes[0].length - 1.0) < 1e-9 && std::fabs(rs->notes[1].beat - 2.0) < 1e-9, "running status and an unreleased note");
 
     // The course follows the tune: cues on beats where the tune plays, rows from pitch.
-    lightfoot::Track course = lightfoot::Track::fromSong(*song);
-    check(course.finite() && course.stepBeats() == 0.5 && course.length() >= 128, "a song with off-beat notes runs in half-beat steps");
+    // At level 1 the chart is the strong beats only; from level 5 it is every note.
+    lightfoot::Track easy = lightfoot::Track::fromSong(*song, 1);
+    check(easy.finite() && easy.stepBeats() == 0.5 && easy.length() >= 128, "a song with off-beat notes runs in half-beat steps");
+    int easyCues = 0, easyOff = 0;
+    for (int64_t i = 0; i < easy.length(); ++i) {
+        if (!easy.at(i).cue) continue;
+        ++easyCues;
+        if (i % 2 == 1) ++easyOff;
+    }
+    check(easyCues >= 24 && easyCues <= 30 && easyOff == 0, "level 1 plays the strong beats only");
+    lightfoot::Track course = lightfoot::Track::fromSong(*song, 5);
     int cues = 0, offBeatCues = 0;
     for (int64_t i = 0; i < course.length(); ++i) {
         if (!course.at(i).cue) continue;
         ++cues;
         if (i % 2 == 1) ++offBeatCues;
     }
-    check(cues >= 50 && cues <= 70, "every tune note is a jump");
+    check(cues >= 50 && cues <= 70, "from level 5 every tune note is a jump");
+    int manual = 0, manualWithPitch = 0;
+    for (const auto& n : song->notes) manual += n.manual ? 1 : 0;
+    for (int64_t i = 0; i < course.length(); ++i)
+        if (course.at(i).cue && course.at(i).note >= 0) ++manualWithPitch;
+    check(manual == cues && manualWithPitch == cues, "the jumps' notes are the player's to sound");
     check(offBeatCues == 14, "the off-beat pickups are jumps between the beats");
     check(!course.at(4).cue && course.at(course.length() + 50).cue == false, "no jumps before bar 2 or after the end");
-    check(course.level(0) == 1 && course.level(64) == 2 && course.level(128) == 3, "song levels still change every 32 beats");
+    check(easy.level(0) == 1 && easy.level(64) == 2 && easy.level(128) == 3, "song levels still change every 32 beats");
     lightfoot::Track hard = lightfoot::Track::fromSong(*song, 6);
     int decoys = 0;
     for (int64_t i = 0; i < hard.length(); ++i) decoys += hard.at(i).decoy >= 0 ? 1 : 0;
@@ -292,6 +307,33 @@ void testMidiSong() {
         for (float v : out) peak = std::max(peak, std::fabs(v));
     }
     check(peak > 0.05f, "the song makes sound");
+    // The melody is not in that sound: only the pads sound it.
+    {
+        lightfoot::AudioEngine solo(44100);
+        solo.setAttached(true);
+        solo.setMode(lightfoot::AudioEngine::Mode::Play);
+        solo.setTempo(112);
+        auto quiet = std::make_shared<lightfoot::MidiSong>(*song);
+        quiet->notes.erase(std::remove_if(quiet->notes.begin(), quiet->notes.end(), [&](const lightfoot::MidiNote& n) { return n.channel != quiet->melodyChannel; }), quiet->notes.end());
+        for (auto& n : quiet->notes) n.manual = true; // the whole tune is the player's
+        quiet->hasDrums = true;                     // no procedural pulse either
+        solo.setSong(quiet.get());
+        solo.resetBeat(8);
+        float melodyPeak = 0;
+        for (int b = 0; b < 300; ++b) {
+            solo.render(out.data(), 256);
+            for (float v : out) melodyPeak = std::max(melodyPeak, std::fabs(v));
+        }
+        check(melodyPeak < 0.03f, "manual melody notes stay silent until hit");
+        solo.noteOn(quiet->melodyChannel, 72, 100, 0.5);
+        float hitPeak = 0;
+        for (int b = 0; b < 40; ++b) {
+            solo.render(out.data(), 256);
+            for (float v : out) hitPeak = std::max(hitPeak, std::fabs(v));
+        }
+        check(hitPeak > 0.05f, "a hit sounds the note");
+        solo.setSong(nullptr);
+    }
     game.engine().setAttached(false);
     // Let the run go on unattended: misses end it before the song does, so the
     // completion path is tested with a tapper.

@@ -105,7 +105,23 @@ void AudioEngine::trigger(Sfx sfx) {
     const int head = queueHead_.load(std::memory_order_relaxed);
     const int next = (head + 1) % kQueue;
     if (next == queueTail_.load(std::memory_order_acquire)) return; // full: drop, a sound is not worth a stall
-    queue_[static_cast<size_t>(head)] = static_cast<int>(sfx);
+    Trigger t;
+    t.sfx = static_cast<int>(sfx);
+    queue_[static_cast<size_t>(head)] = t;
+    queueHead_.store(next, std::memory_order_release);
+}
+
+void AudioEngine::noteOn(int channel, int note, int velocity, double lengthBeats) {
+    const int head = queueHead_.load(std::memory_order_relaxed);
+    const int next = (head + 1) % kQueue;
+    if (next == queueTail_.load(std::memory_order_acquire)) return;
+    Trigger t;
+    t.sfx = -1;
+    t.channel = channel;
+    t.note = note;
+    t.velocity = velocity;
+    t.lengthBeats = static_cast<float>(lengthBeats);
+    queue_[static_cast<size_t>(head)] = t;
     queueHead_.store(next, std::memory_order_release);
 }
 
@@ -407,7 +423,9 @@ void AudioEngine::render(float* out, int frames) {
     // Pull the sounds the game asked for since the last block.
     while (queueTail_.load(std::memory_order_acquire) != queueHead_.load(std::memory_order_acquire)) {
         const int tail = queueTail_.load(std::memory_order_relaxed);
-        startSfx(static_cast<Sfx>(queue_[static_cast<size_t>(tail)]));
+        const Trigger t = queue_[static_cast<size_t>(tail)];
+        if (t.sfx >= 0) startSfx(static_cast<Sfx>(t.sfx));
+        else playNote(t.channel, t.note, t.velocity, t.lengthBeats, 60.0 / std::max(30.0, tempo_.load()));
         queueTail_.store((tail + 1) % kQueue, std::memory_order_release);
     }
     const double dt = 1.0 / sampleRate_;
@@ -438,6 +456,14 @@ void AudioEngine::render(float* out, int frames) {
                 const double beatSeconds = 60.0 / std::max(30.0, tempo_.load());
                 while (songIndex_ < song->notes.size() && song->notes[songIndex_].beat <= beat) {
                     const MidiNote& n = song->notes[songIndex_++];
+                    if (n.manual) continue; // the player's: sounded by the pads
+                    if (n.channel == song->melodyChannel) {
+                        // A melody note thinned out of the course: it belongs to the player's
+                        // line, so it follows their last hit, quietly.
+                        if (!melodyGate_) continue;
+                        playNote(n.channel, n.note, n.velocity, n.length, beatSeconds);
+                        continue;
+                    }
                     playNote(n.channel, n.note, n.velocity, n.length, beatSeconds);
                 }
             }

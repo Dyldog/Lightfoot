@@ -239,6 +239,7 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
     setState(State::Playing, nowMs);
     applyLevel(level_, false, nowMs);
     engine_.setBrightness(0);
+    engine_.setMelodyGate(true);
     engine_.trigger(Sfx::Start);
     saveSettings();
 }
@@ -591,7 +592,16 @@ void Game::resolve(Hit hit, double deltaBeats, int64_t nowMs) {
     runnerRow_ = jumpTo_;
 
     engine_.trigger(twin ? Sfx::TwinJump : Sfx::Jump);
-    engine_.trigger(hit == Hit::Perfect ? Sfx::Perfect : Sfx::Good);
+    if (song_ && s.note >= 0) {
+        // You are playing the tune: the hit is the note.
+        const int velocity = hit == Hit::Perfect ? std::min(127, s.velocity + 10) : std::max(40, s.velocity - 15);
+        engine_.noteOn(song_->melodyChannel, s.note, velocity, s.noteBeats);
+        if (s.note2 >= 0) engine_.noteOn(song_->melodyChannel, s.note2, velocity, s.noteBeats);
+        engine_.setMelodyGate(true);
+        if (hit == Hit::Perfect) engine_.trigger(Sfx::Tick);
+    } else {
+        engine_.trigger(hit == Hit::Perfect ? Sfx::Perfect : Sfx::Good);
+    }
     const uint32_t color = hit == Hit::Perfect ? palette_.white : palette_.row[s.row];
     spawnBurst(96, static_cast<float>(rowY(jumpFrom_)), palette_.row[jumpFrom_], hit == Hit::Perfect ? 18 : 10, 70);
     char label[32];
@@ -625,6 +635,7 @@ void Game::miss(int64_t nowMs) {
     lastHit_ = Hit::Miss;
     lastHitMs_ = nowMs;
     const bool graced = pos_ < graceUntil_;
+    engine_.setMelodyGate(false); // the tune drops out until the next hit
     if (graced) {
         addText("MISS", 96, static_cast<float>(rowY(runnerRow_) - 30), palette_.textDim, 0);
     } else {

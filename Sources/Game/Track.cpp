@@ -87,7 +87,7 @@ void Track::generate(int64_t upTo) {
     }
 }
 
-Track Track::fromSong(const MidiSong& song, int startLevel) {
+Track Track::fromSong(MidiSong& song, int startLevel) {
     Track t(static_cast<uint32_t>(song.notes.size() * 7919 + 17), startLevel);
     t.finite_ = true;
     t.beatsPerBar_ = song.beatsPerBar;
@@ -116,14 +116,15 @@ Track Track::fromSong(const MidiSong& song, int startLevel) {
     };
     // One cue per step: the first (highest) note on it, quantised.
     const int64_t steps = static_cast<int64_t>(std::ceil(song.lengthBeats / step)) + 2;
-    std::vector<const MidiNote*> onStep(static_cast<size_t>(steps), nullptr);
-    std::vector<const MidiNote*> second(static_cast<size_t>(steps), nullptr);
-    for (const MidiNote& n : song.notes) {
+    std::vector<MidiNote*> onStep(static_cast<size_t>(steps), nullptr);
+    std::vector<MidiNote*> second(static_cast<size_t>(steps), nullptr);
+    for (MidiNote& n : song.notes) {
+        n.manual = false;
         if (n.channel != song.melodyChannel) continue;
         const int64_t b = static_cast<int64_t>(std::llround(n.beat / step));
         if (b < 0 || b >= steps) continue;
         if (std::fabs(n.beat - b * step) > 0.3 * step) continue; // between steps: not a jump
-        const MidiNote*& slotNote = onStep[static_cast<size_t>(b)];
+        MidiNote*& slotNote = onStep[static_cast<size_t>(b)];
         if (!slotNote) slotNote = &n;
         else if (std::fabs(n.beat - slotNote->beat) < 0.05 && rowFor(n.note) != rowFor(slotNote->note) && !second[static_cast<size_t>(b)]) second[static_cast<size_t>(b)] = &n;
     }
@@ -132,12 +133,29 @@ Track Track::fromSong(const MidiSong& song, int startLevel) {
     for (int64_t b = 0; b < steps; ++b) {
         Slot s;
         s.row = row;
-        const MidiNote* n = onStep[static_cast<size_t>(b)];
+        MidiNote* n = onStep[static_cast<size_t>(b)];
         const bool prevGap = b > 0 && t.slots_.back().gap;
         const int lvl = t.level(b);
-        if (n && !prevGap && b * step >= 4) {
+        // The chart is a simplified melody, filling in as the levels rise: the
+        // strong beats first, then every beat, then every note. Held notes are
+        // landmarks and always stay.
+        bool keep = n != nullptr;
+        if (n) {
+            const double beatPos = b * step;
+            const bool onBeat = std::fabs(beatPos - std::round(beatPos)) < 1e-9;
+            const bool strong = onBeat && (static_cast<int64_t>(std::llround(beatPos)) % 2 == 0);
+            const bool held = n->length >= 1.0;
+            if (lvl <= 2) keep = strong || held;
+            else if (lvl <= 4) keep = onBeat || held;
+        }
+        if (n && keep && !prevGap && b * step >= 4) {
             const int target = rowFor(n->note);
-            const MidiNote* chord = second[static_cast<size_t>(b)];
+            MidiNote* chord = second[static_cast<size_t>(b)];
+            // The player sounds these notes; the engine leaves them alone.
+            n->manual = true;
+            s.note = n->note;
+            s.velocity = n->velocity;
+            s.noteBeats = n->length;
             const bool nextFree = b + 1 < steps && !onStep[static_cast<size_t>(b + 1)];
             // Decoys arrive with the levels, as on the endless course.
             int decoy = -1;
@@ -151,6 +169,8 @@ Track Track::fromSong(const MidiSong& song, int startLevel) {
                 s.gap = true;
                 s.row = target;
                 s.row2 = rowFor(chord->note);
+                s.note2 = chord->note;
+                chord->manual = true;
                 s.decoy = decoy;
                 t.slots_.push_back(s);
                 Slot landing;

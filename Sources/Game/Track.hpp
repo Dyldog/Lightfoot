@@ -14,6 +14,10 @@ struct Slot {
     int row2 = -1;      // twin cue: a second lit pad; both are hit together for a long jump
     int decoy = -1;     // a dim red pad in this column that must not be hit
     bool gap = false;   // no platform: a twin jump flies over it
+    int note = -1;      // song mode: the melody note this jump sounds (and note2 for a twin)
+    int note2 = -1;
+    int velocity = 100;
+    double noteBeats = 0.5;
 };
 
 /// Deterministic course generator. The same seed gives the same course, so a
@@ -29,7 +33,8 @@ public:
     explicit Track(uint32_t seed = 1, int startLevel = 1);
     /// A fixed course: the melody of a song, one cue per beat at most, the row
     /// following the pitch. Beyond the end the course is plain running.
-    static Track fromSong(const class MidiSong& song, int startLevel = 1);
+    /// Marks the notes the player will sound as manual, so the engine leaves them to the pads.
+    static Track fromSong(class MidiSong& song, int startLevel = 1);
 
     bool finite() const { return finite_; }
     int64_t length() const { return length_; }

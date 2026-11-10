@@ -57,18 +57,26 @@ What the game does with a file:
 
 - The tempo map and time signature come from the file. The course runs at
   the song's tempo, speeding up and slowing down where the file does.
-- The tune is the channel with the most notes above the bass register. Every
-  note becomes a jump, so you play the rhythm as written: a song with notes
-  between the beats runs in half-beat steps, with each pad column half a
-  beat. The pitch picks the row: the highest notes are the top row, the
+- The tune is the channel with the most notes above the bass register. Its
+  notes become the jumps, so you play the rhythm as written: a song with
+  notes between the beats runs in half-beat steps, with each pad column half
+  a beat. The pitch picks the row: the highest notes are the top row, the
   lowest the bottom row. A chord becomes a long jump when the step after it
   is free. Notes closer together than half a beat are thinned.
 - Levels rise every 32 beats as on the endless course. Each level plays the
   song 5% faster, and from level 5 decoys appear. **K3** sets the start level
   for songs too.
-- Every channel is played by the built-in synth: drums on channel 10 onto
-  the kit, low notes as bass, long notes as pads, the rest as plucks. A file
-  without drums gets a kick and hats underneath so the beat stays audible.
+- You play the tune, from a chart that is a simplified melody. Levels 1
+  and 2 ask for the strong beats only, levels 3 and 4 for every beat, level
+  5 upwards for every note; a held note is always in the chart. The rest of
+  the tune plays itself along with the band, and the whole melody follows
+  your hands: a hit sounds its note, late and it comes in late, miss and the
+  tune drops out until your next hit. A PERFECT plays the note a little
+  harder. Start at a higher level with **K3** for the full chart from bar one.
+- Every other channel is played by the built-in synth: drums on channel 10
+  onto the kit, low notes as bass, long notes as pads, the rest as plucks. A
+  file without drums gets a kick and hats underneath so the beat stays
+  audible.
 - Four beats count in, then the song starts at its first bar. Leading
   silence in the file is skipped. The run ends with **SONG CLEAR** when the
   song does, and the score goes on the table with the song's name.
