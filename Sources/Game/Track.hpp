@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -15,8 +14,6 @@ struct Slot {
     int row2 = -1;      // twin cue: a second lit pad; both are hit together for a long jump
     int decoy = -1;     // a dim red pad in this column that must not be hit
     bool gap = false;   // no platform: a twin jump flies over it
-    int pad = -1;       // song mode: the pad that is this note (pads are the instrument), pad2 for a chord
-    int pad2 = -1;
     int note = -1;      // song mode: the melody note this jump sounds (and note2 for a twin)
     int note2 = -1;
     int velocity = 100;
@@ -43,11 +40,11 @@ public:
     int64_t length() const { return length_; }
     int beatsPerBar() const { return beatsPerBar_; }
     const std::string& songName() const { return songName_; }
-    /// Song mode: the melody pitch a pad plays, -1 for an unused pad.
-    int padPitch(int pad) const { return pad >= 0 && pad < 16 ? padPitch_[static_cast<size_t>(pad)] : -1; }
-    /// Pad index for a grid row (0 top) and column (0 left): pad 1 is bottom-left.
-    static int padIndex(int row, int col) { return (3 - row) * 4 + col; }
-    static int padRow(int pad) { return 3 - pad / 4; }
+    /// Rows for a melody from its shape: a higher note than the last is one
+    /// row up, a lower one a row down, the same note stays. Before a run of
+    /// four or more rises or falls the course repositions, by more than one
+    /// row if needed, so the run can be played across the height. Exposed for tests.
+    static std::vector<int> contourRows(const std::vector<int>& pitches, int startRow = 2);
 
     /// By value: the course grows as it is read, so a reference would not survive.
     Slot at(int64_t index);
@@ -74,7 +71,6 @@ private:
     int64_t length_ = 0;
     int beatsPerBar_ = 4;
     std::string songName_;
-    std::array<int, 16> padPitch_{};
 };
 
 } // namespace lightfoot

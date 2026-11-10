@@ -119,8 +119,8 @@ int runShots(const std::string& dir, int scale) {
         const int64_t cue = game.cueSlot();
         if (cue >= 0 && std::abs(game.pos() - static_cast<double>(cue)) < 0.03) {
             const Slot slot = game.track().at(cue);
-            loop.pushPadTap(slot.pad);
-            if (slot.pad2 >= 0) loop.pushPadTap(slot.pad2);
+            loop.pushPadTap(Game::padIndex(slot.row, 0));
+            if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));
         }
     }
     s.save(loop, "09-song-run");

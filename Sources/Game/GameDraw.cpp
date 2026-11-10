@@ -230,18 +230,8 @@ void Game::drawWorld(Canvas& canvas, int64_t nowMs) {
         if (k >= 0 && s.cue) {
             const bool pending = k == cueSlot_;
             const int a = pending ? 150 + static_cast<int>(100 * pulse) : 110;
-            int cx = x0 + 2;
-            if (s.pad >= 0) {
-                // Song mode: the platform shows which pad, as four segments with the note's lit.
-                const int seg = std::max(4, (x1 - x0) / 4);
-                for (int c = 0; c < 4; ++c) {
-                    const bool lit = c == s.pad % 4 || (s.pad2 >= 0 && c == s.pad2 % 4);
-                    const uint32_t sc = c == s.pad % 4 ? edge : p.row[padRow(s.pad2 >= 0 ? s.pad2 : s.pad)];
-                    canvas.fillAlpha({x0 + c * seg, top - 3, seg - 1, 3}, lit ? sc : p.platform, lit ? a : 160);
-                }
-                cx = x0 + (s.pad % 4) * seg + seg / 2 - 3;
-            }
-            // Chevron, in the row colour.
+            const int cx = x0 + 2;
+            // Chevron on the leading edge, in the row colour.
             for (int i = 0; i < 6; ++i) canvas.blend(cx + i, top - 9 + std::abs(i - 3) + 1, edge, a);
             for (int i = 0; i < 6; ++i) canvas.blend(cx + i, top - 6 + std::abs(i - 3) + 1, edge, a);
             canvas.glow(cx + 2, top - 4, pending ? 9 : 6, edge, pending ? 120 : 60);
@@ -510,10 +500,9 @@ void Game::drawHowTo(Canvas& canvas, int64_t nowMs) {
         "32 beats. Fader down: slower,",
         "half points.",
         "",
-        "In a song the pads are the",
-        "instrument: low notes bottom",
-        "left, high notes top right.",
-        "The lit pad is the next note.",
+        "In a song the rows follow the",
+        "tune: a higher note is a row",
+        "up, a lower one a row down.",
     };
     int y = 26;
     for (const char* l : lines) {
@@ -644,22 +633,6 @@ uint32_t Game::padColor(int pad, int64_t nowMs) const {
     switch (state_) {
     case State::Playing:
     case State::Paused: {
-        if (song_) {
-            // The instrument: the next note bright and pulsing, the two after it dimmer.
-            for (size_t i = 0; i < upcoming_.size(); ++i) {
-                const int64_t k = upcoming_[i];
-                if (k < 0) continue;
-                const Slot s = track_.at(k);
-                if (pad != s.pad && pad != s.pad2) continue;
-                const double distance = std::max(0.0, static_cast<double>(k) - pos_) * stepBeats();
-                const float approach = static_cast<float>(std::clamp(1.0 - distance / 3.0, 0.15, 1.0));
-                float level = i == 0 ? 0.6f + 0.4f * approach : i == 1 ? 0.12f + 0.3f * approach : 0.1f;
-                if (i == 0 && twinHalf_ && pad == twinHalfRow_) level = 1.0f;
-                if (state_ == State::Paused) level *= 0.3f;
-                return Palette::scale(p.row[row], level);
-            }
-            return 0;
-        }
         const int64_t k = columnBase() + col;
         if (k < 0) return 0;
         const Slot& s = track_.at(k);

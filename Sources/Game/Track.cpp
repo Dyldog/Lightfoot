@@ -87,43 +87,83 @@ void Track::generate(int64_t upTo) {
     }
 }
 
+std::vector<int> Track::contourRows(const std::vector<int>& pitches, int startRow) {
+    const int n = static_cast<int>(pitches.size());
+    std::vector<int> rows(static_cast<size_t>(n), std::clamp(startRow, 0, 3));
+    if (n == 0) return rows;
+    auto direction = [&](int i) { // movement into note i: +1 higher, -1 lower, 0 same
+        if (i <= 0 || i >= n) return 0;
+        return pitches[static_cast<size_t>(i)] > pitches[static_cast<size_t>(i - 1)] ? 1 : pitches[static_cast<size_t>(i)] < pitches[static_cast<size_t>(i - 1)] ? -1 : 0;
+    };
+    auto runFrom = [&](int i) { // consecutive moves in the direction of the move into note i
+        const int d = direction(i);
+        if (d == 0) return 0;
+        int len = 0;
+        while (i + len < n && direction(i + len) == d) ++len;
+        return len;
+    };
+    // The first note sits where the opening run can be played.
+    {
+        const int d = direction(1), len = runFrom(1);
+        if (len >= 2) rows[0] = d > 0 ? 3 : 0;
+    }
+    int planned = -1, plannedLen = 0, plannedStart = 0; // a long run being spread across the height
+    for (int i = 1; i < n; ++i) {
+        const int prev = rows[static_cast<size_t>(i - 1)];
+        const int d = direction(i);
+        if (d == 0) {
+            rows[static_cast<size_t>(i)] = prev;
+            continue;
+        }
+        if (i > planned) {
+            // A new run begins here. Four or more moves: spread three rows over
+            // it; the note before it has already been placed at the far end.
+            const int len = runFrom(i);
+            if (len >= 4) {
+                planned = i + len - 1;
+                plannedLen = len;
+                plannedStart = i;
+            } else {
+                planned = -1;
+            }
+        }
+        int row;
+        if (planned >= 0) {
+            const int k = i - plannedStart + 1; // 1..len
+            const int origin = rows[static_cast<size_t>(plannedStart - 1)];
+            const int travel = (k * 3) / plannedLen;
+            row = d > 0 ? origin - travel : origin + travel;
+        } else {
+            row = prev - d; // up is a smaller row number
+        }
+        rows[static_cast<size_t>(i)] = std::clamp(row, 0, 3);
+        // Look ahead: if a long run starts after this note, put this note at
+        // the far end so the run has the whole height, even if that is a jump.
+        if (i + 1 < n) {
+            const int nextD = direction(i + 1), nextLen = runFrom(i + 1);
+            if (nextLen >= 4 && nextD != 0) rows[static_cast<size_t>(i)] = nextD > 0 ? 3 : 0;
+        }
+    }
+    return rows;
+}
+
 Track Track::fromSong(MidiSong& song, int startLevel) {
     Track t(static_cast<uint32_t>(song.notes.size() * 7919 + 17), startLevel);
     t.finite_ = true;
     t.beatsPerBar_ = song.beatsPerBar;
     t.songName_ = song.name;
-    t.padPitch_.fill(-1);
-    // The melody's pitches, lowest to highest, laid across the pads like an
-    // instrument: pad 1 (bottom-left) is the lowest, pad 16 (top-right) the
-    // highest. More than sixteen pitches share pads by rank.
-    std::map<int, int> pitchPad;
     int offBeat = 0, melodyNotes = 0;
     for (const MidiNote& n : song.notes) {
         if (n.channel != song.melodyChannel) continue;
-        pitchPad[n.note] = 0;
         ++melodyNotes;
         const double frac = n.beat - std::floor(n.beat);
         if (std::fabs(frac - 0.5) < 0.15) ++offBeat;
-    }
-    const int distinct = std::max(1, static_cast<int>(pitchPad.size()));
-    int rank = 0;
-    for (auto& kv : pitchPad) {
-        // Fewer than sixteen pitches spread over the whole grid, so a small tune
-        // still uses every height; more share pads by rank.
-        const int pad = distinct <= 1 ? 7 : distinct <= 16 ? static_cast<int>(std::lround(rank * 15.0 / (distinct - 1))) : rank * 16 / distinct;
-        kv.second = std::clamp(pad, 0, 15);
-        if (t.padPitch_[static_cast<size_t>(kv.second)] < 0) t.padPitch_[static_cast<size_t>(kv.second)] = kv.first;
-        ++rank;
     }
     // Notes on the off-beat mean the course runs in half-beat steps, so the
     // rhythm is played as written rather than rounded to the beat.
     t.stepBeats_ = melodyNotes > 0 && offBeat * 10 >= melodyNotes ? 0.5 : 1.0;
     const double step = t.stepBeats_;
-    auto padFor = [&](int note) {
-        auto it = pitchPad.find(note);
-        return it == pitchPad.end() ? 0 : it->second;
-    };
-    // One cue per step: the first (highest) note on it, quantised.
+    // One candidate per step: the first (highest) note on it, quantised.
     const int64_t steps = static_cast<int64_t>(std::ceil(song.lengthBeats / step)) + 2;
     std::vector<MidiNote*> onStep(static_cast<size_t>(steps), nullptr);
     std::vector<MidiNote*> second(static_cast<size_t>(steps), nullptr);
@@ -135,59 +175,81 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
         if (std::fabs(n.beat - b * step) > 0.3 * step) continue; // between steps: not a jump
         MidiNote*& slotNote = onStep[static_cast<size_t>(b)];
         if (!slotNote) slotNote = &n;
-        else if (std::fabs(n.beat - slotNote->beat) < 0.05 && padFor(n.note) != padFor(slotNote->note) && !second[static_cast<size_t>(b)]) second[static_cast<size_t>(b)] = &n;
+        else if (std::fabs(n.beat - slotNote->beat) < 0.05 && n.note != slotNote->note && !second[static_cast<size_t>(b)]) second[static_cast<size_t>(b)] = &n;
     }
+    // The chart: a simplified melody that fills in as the levels rise. The
+    // strong beats first, then every beat, then every note; held notes stay.
+    struct ChartNote {
+        int64_t step;
+        MidiNote* note;
+        MidiNote* chord;
+    };
+    std::vector<ChartNote> chart;
+    for (int64_t b = 0; b < steps; ++b) {
+        MidiNote* n = onStep[static_cast<size_t>(b)];
+        if (!n || b * step < 4) continue;
+        if (!chart.empty() && chart.back().step == b - 1 && chart.back().chord && b + 0 == chart.back().step + 1) continue; // a long jump lands here
+        const int lvl = t.level(b);
+        const double beatPos = b * step;
+        const bool onBeat = std::fabs(beatPos - std::round(beatPos)) < 1e-9;
+        const bool strong = onBeat && (static_cast<int64_t>(std::llround(beatPos)) % 2 == 0);
+        const bool held = n->length >= 1.0;
+        bool keep = true;
+        if (lvl <= 2) keep = strong || held;
+        else if (lvl <= 4) keep = onBeat || held;
+        if (!keep) continue;
+        MidiNote* chord = second[static_cast<size_t>(b)];
+        const bool nextFree = b + 1 < steps && !onStep[static_cast<size_t>(b + 1)];
+        chart.push_back({b, n, chord && nextFree ? chord : nullptr});
+    }
+    std::vector<int> pitches;
+    pitches.reserve(chart.size());
+    for (const ChartNote& c : chart) pitches.push_back(c.note->note);
+    const std::vector<int> rows = contourRows(pitches, 2);
+
     t.slots_.reserve(static_cast<size_t>(steps) + 8);
-    int row = 3;
+    int row = rows.empty() ? 3 : rows.front();
+    size_t next = 0;
     for (int64_t b = 0; b < steps; ++b) {
         Slot s;
         s.row = row;
-        MidiNote* n = onStep[static_cast<size_t>(b)];
-        const bool prevGap = b > 0 && t.slots_.back().gap;
-        const int lvl = t.level(b);
-        // The chart is a simplified melody, filling in as the levels rise: the
-        // strong beats first, then every beat, then every note. Held notes are
-        // landmarks and always stay.
-        bool keep = n != nullptr;
-        if (n) {
-            const double beatPos = b * step;
-            const bool onBeat = std::fabs(beatPos - std::round(beatPos)) < 1e-9;
-            const bool strong = onBeat && (static_cast<int64_t>(std::llround(beatPos)) % 2 == 0);
-            const bool held = n->length >= 1.0;
-            if (lvl <= 2) keep = strong || held;
-            else if (lvl <= 4) keep = onBeat || held;
-        }
-        if (n && keep && !prevGap && b * step >= 4) {
-            const int pad = padFor(n->note);
-            const int target = padRow(pad);
-            MidiNote* chord = second[static_cast<size_t>(b)];
-            // The player sounds these notes; the engine leaves them alone.
-            n->manual = true;
-            s.pad = pad;
-            s.note = n->note;
-            s.velocity = n->velocity;
-            s.noteBeats = n->length;
-            const bool nextFree = b + 1 < steps && !onStep[static_cast<size_t>(b + 1)];
-            if (chord && nextFree) {
-                // A chord with a free step after it: a long jump on two pads.
-                s.cue = true;
+        if (next < chart.size() && chart[next].step == b) {
+            const ChartNote& c = chart[next];
+            const int lvl = t.level(b);
+            const int target = rows[next];
+            // Repeated notes stay on the same row: still a hop, still the note.
+            s.cue = true;
+            s.row = target;
+            s.note = c.note->note;
+            s.velocity = c.note->velocity;
+            s.noteBeats = c.note->length;
+            c.note->manual = true;
+            if (lvl >= 5 && t.unit() < std::min(0.45, 0.15 + 0.04 * lvl)) {
+                int d;
+                do d = static_cast<int>(t.unit() * 4) % 4;
+                while (d == target || d == target + (c.note->note > (c.chord ? c.chord->note : c.note->note) ? 1 : -1));
+                s.decoy = d;
+            }
+            if (c.chord) {
+                // A chord with a free step after it: a long jump on two pads, the
+                // second a row towards the chord's other note.
                 s.gap = true;
-                s.row = target;
-                s.pad2 = padFor(chord->note);
-                s.row2 = padRow(s.pad2);
-                s.note2 = chord->note;
-                chord->manual = true;
+                s.row2 = std::clamp(target + (c.chord->note > c.note->note ? -1 : 1), 0, 3);
+                if (s.row2 == target) s.row2 = target == 0 ? 1 : target - 1;
+                s.note2 = c.chord->note;
+                c.chord->manual = true;
+                if (s.decoy == s.row2) s.decoy = -1;
                 t.slots_.push_back(s);
                 Slot landing;
                 landing.row = target;
                 t.slots_.push_back(landing);
                 row = target;
+                ++next;
                 ++b; // the landing used the next step
                 continue;
             }
-            s.cue = true;
-            s.row = target;
             row = target;
+            ++next;
         }
         t.slots_.push_back(s);
     }

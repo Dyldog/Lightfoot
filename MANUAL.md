@@ -25,7 +25,7 @@ the MPC is stock again. Firmware 1.3.0.12 only.
 ![How to play, as shown on the device](docs/screens/01-how-to.png)
 
 1. Press **PLAY**. Four beats count in, then the course begins.
-2. On the endless course each pad column is one beat ahead: the left column is now, the right column is three beats away. In a song the pads are the instrument instead, and the lit pad is the next note. The lit pad in a column is the platform you must land on; its row is the platform's height, top row highest.
+2. Each pad column is one step ahead, a beat on the endless course and half a beat in a song with off-beat notes: the left column is now, the right column is three steps away. The lit pad in a column is the platform you must land on; its row is the platform's height, top row highest.
 3. When a lit pad reaches the left column, hit it **on the beat**. On time is PERFECT, close is GOOD. Only the lit pad counts: an unlit pad does nothing, a lit pad in a later column is EARLY and breaks your combo.
 4. Miss the beat and the runner falls. You lose a life and the combo, and the course carries on from the next platform. Three lives.
 5. Every 32 beats the level rises: faster, more jumps, then twins and decoys.
@@ -57,14 +57,15 @@ What the game does with a file:
 
 - The tempo map and time signature come from the file. The course runs at
   the song's tempo, speeding up and slowing down where the file does.
-- In a song the pads are the instrument. The tune is the channel with the
-  most notes above the bass register, and its pitches are laid across the
-  sixteen pads from low to high: pad 1, bottom left, is the lowest note, pad
-  16, top right, the highest. The next note's pad is lit and pulses as it
-  comes; the two after it glow dimmer. On screen the note's row is the
-  platform height and its column is marked on the platform. A chord is two
-  lit pads and a long jump. Hit the wrong pad and you hear the wrong note
-  and lose the combo. Notes closer together than half a beat are thinned.
+- The tune is the channel with the most notes above the bass register. Its
+  notes become the jumps, so you play the rhythm as written: a song with
+  notes between the beats runs in half-beat steps, with each pad column half
+  a beat. The rows follow the shape of the tune rather than its pitch: a
+  note higher than the last is one row up, a lower one a row down, the same
+  note stays. Before a run of four or more rises or falls the course moves
+  to the far end, by more than one row if it must, so the whole run can be
+  played across the height. A chord becomes a long jump when the step after
+  it is free. Notes closer together than half a beat are thinned.
 - Levels rise every 32 beats as on the endless course. Each level plays the
   song 5% faster, and from level 5 decoys appear. **K3** sets the start level
   for songs too.
