@@ -52,11 +52,18 @@ int runShots(const std::string& dir, int scale) {
     s.run(loop, 1200);
     s.save(loop, "00-title");
 
-    loop.pushButtonTap(IN_B2);
+    // How to play is the third menu item: two wheel clicks, then press.
+    loop.push(panelmidi::encoder(1));
+    s.frame(loop);
+    loop.push(panelmidi::encoder(1));
+    s.frame(loop);
+    loop.pushButtonTap(IN_ENCODER);
     s.run(loop, 100);
     s.save(loop, "01-how-to");
     loop.pushButtonTap(IN_B1);
     s.run(loop, 100);
+    loop.push(panelmidi::encoder(-2));
+    s.frame(loop);
 
     // A seeded run from level 3: play the jumps perfectly, then let the picture settle.
     game.setStartLevel(3);
