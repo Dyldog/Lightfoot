@@ -1,0 +1,8 @@
+#!/bin/sh
+# Keeps the PDF manual in step with MANUAL.md: when the manual, its config or
+# its renderer is staged, rebuild the PDF and stage it too.
+# Install: copy to tools/hooks/pre-commit, chmod +x, `git config core.hooksPath tools/hooks`.
+if git diff --cached --name-only | grep -q -E '^(MANUAL\.md|docs/manual\.json|tools/build-manual\.py)$'; then
+  make -s manual || exit 1
+  git add -- *-Manual.pdf docs/screens 2>/dev/null
+fi

@@ -1,0 +1,13 @@
+{
+  "product": "Lightfoot",
+  "title_plain": "LIGHT", "title_accent": "FOOT",
+  "tagline": "A rhythm platformer for the Akai MPC Sample",
+  "band_right": "RHYTHM PLATFORMER · MPC SAMPLE",
+  "subtitle": "How to Play",
+  "disclaimer": "Not affiliated with inMusic Brands or Akai Professional. MPC and MPC Sample are their trademarks.",
+  "accent": "#ffb000", "callout": "#c8102e", "dark": "#15122a", "paper": "#e8e6e1",
+  "image_root": "docs",
+  "image_width": "62%",
+  "two_column_widths": [30, 70],
+  "cover": "mosaic"
+}

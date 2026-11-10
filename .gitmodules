@@ -1,0 +1,6 @@
+[submodule "deps/mpc-ui-toolkit"]
+	path = deps/mpc-ui-toolkit
+	url = https://github.com/garrettjwilke/mpc-ui-toolkit
+[submodule "deps/tinyalsa"]
+	path = deps/tinyalsa
+	url = https://github.com/tinyalsa/tinyalsa
