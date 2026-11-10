@@ -92,27 +92,36 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
     t.finite_ = true;
     t.beatsPerBar_ = song.beatsPerBar;
     t.songName_ = song.name;
-    // The melody's pitches, ranked, give four rows: the top row is the top quarter.
-    std::map<int, int> pitchRank;
+    t.padPitch_.fill(-1);
+    // The melody's pitches, lowest to highest, laid across the pads like an
+    // instrument: pad 1 (bottom-left) is the lowest, pad 16 (top-right) the
+    // highest. More than sixteen pitches share pads by rank.
+    std::map<int, int> pitchPad;
     int offBeat = 0, melodyNotes = 0;
     for (const MidiNote& n : song.notes) {
         if (n.channel != song.melodyChannel) continue;
-        pitchRank[n.note] = 0;
+        pitchPad[n.note] = 0;
         ++melodyNotes;
         const double frac = n.beat - std::floor(n.beat);
         if (std::fabs(frac - 0.5) < 0.15) ++offBeat;
+    }
+    const int distinct = std::max(1, static_cast<int>(pitchPad.size()));
+    int rank = 0;
+    for (auto& kv : pitchPad) {
+        // Fewer than sixteen pitches spread over the whole grid, so a small tune
+        // still uses every height; more share pads by rank.
+        const int pad = distinct <= 1 ? 7 : distinct <= 16 ? static_cast<int>(std::lround(rank * 15.0 / (distinct - 1))) : rank * 16 / distinct;
+        kv.second = std::clamp(pad, 0, 15);
+        if (t.padPitch_[static_cast<size_t>(kv.second)] < 0) t.padPitch_[static_cast<size_t>(kv.second)] = kv.first;
+        ++rank;
     }
     // Notes on the off-beat mean the course runs in half-beat steps, so the
     // rhythm is played as written rather than rounded to the beat.
     t.stepBeats_ = melodyNotes > 0 && offBeat * 10 >= melodyNotes ? 0.5 : 1.0;
     const double step = t.stepBeats_;
-    int rank = 0;
-    for (auto& kv : pitchRank) kv.second = rank++;
-    const int distinct = std::max(1, rank);
-    auto rowFor = [&](int note) {
-        auto it = pitchRank.find(note);
-        if (it == pitchRank.end()) return 3;
-        return std::clamp(3 - it->second * 4 / distinct, 0, 3);
+    auto padFor = [&](int note) {
+        auto it = pitchPad.find(note);
+        return it == pitchPad.end() ? 0 : it->second;
     };
     // One cue per step: the first (highest) note on it, quantised.
     const int64_t steps = static_cast<int64_t>(std::ceil(song.lengthBeats / step)) + 2;
@@ -126,7 +135,7 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
         if (std::fabs(n.beat - b * step) > 0.3 * step) continue; // between steps: not a jump
         MidiNote*& slotNote = onStep[static_cast<size_t>(b)];
         if (!slotNote) slotNote = &n;
-        else if (std::fabs(n.beat - slotNote->beat) < 0.05 && rowFor(n.note) != rowFor(slotNote->note) && !second[static_cast<size_t>(b)]) second[static_cast<size_t>(b)] = &n;
+        else if (std::fabs(n.beat - slotNote->beat) < 0.05 && padFor(n.note) != padFor(slotNote->note) && !second[static_cast<size_t>(b)]) second[static_cast<size_t>(b)] = &n;
     }
     t.slots_.reserve(static_cast<size_t>(steps) + 8);
     int row = 3;
@@ -149,29 +158,25 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
             else if (lvl <= 4) keep = onBeat || held;
         }
         if (n && keep && !prevGap && b * step >= 4) {
-            const int target = rowFor(n->note);
+            const int pad = padFor(n->note);
+            const int target = padRow(pad);
             MidiNote* chord = second[static_cast<size_t>(b)];
             // The player sounds these notes; the engine leaves them alone.
             n->manual = true;
+            s.pad = pad;
             s.note = n->note;
             s.velocity = n->velocity;
             s.noteBeats = n->length;
             const bool nextFree = b + 1 < steps && !onStep[static_cast<size_t>(b + 1)];
-            // Decoys arrive with the levels, as on the endless course.
-            int decoy = -1;
-            if (lvl >= 5 && t.unit() < std::min(0.45, 0.15 + 0.04 * lvl)) {
-                do decoy = static_cast<int>(t.unit() * 4) % 4;
-                while (decoy == target || (chord && decoy == rowFor(chord->note)));
-            }
-            if (chord && nextFree && target != rowFor(chord->note)) {
-                // A chord with a free step after it: a long jump.
+            if (chord && nextFree) {
+                // A chord with a free step after it: a long jump on two pads.
                 s.cue = true;
                 s.gap = true;
                 s.row = target;
-                s.row2 = rowFor(chord->note);
+                s.pad2 = padFor(chord->note);
+                s.row2 = padRow(s.pad2);
                 s.note2 = chord->note;
                 chord->manual = true;
-                s.decoy = decoy;
                 t.slots_.push_back(s);
                 Slot landing;
                 landing.row = target;
@@ -182,7 +187,6 @@ Track Track::fromSong(MidiSong& song, int startLevel) {
             }
             s.cue = true;
             s.row = target;
-            s.decoy = decoy;
             row = target;
         }
         t.slots_.push_back(s);

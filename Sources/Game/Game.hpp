@@ -104,6 +104,9 @@ private:
     void handleKnobs(const Frame& in);
     void handlePads(const Frame& in, int64_t nowMs);
     void judge(int row, int col, const Frame& in, int64_t nowMs);
+    void judgeInstrument(int pad, const Frame& in, int64_t nowMs);
+    void sourNote(int pad);
+    void refreshUpcoming();
     void resolve(Hit hit, double deltaBeats, int64_t nowMs);
     void miss(int64_t nowMs);
     void slip(const char* why, int64_t nowMs);
@@ -175,6 +178,7 @@ private:
     int64_t slot_ = -1;          // beat the runner is on
     int64_t cueSlot_ = -1;       // the jump awaiting a hit, -1 when none
     int64_t resolvedUpTo_ = -1;  // last cue judged, hit or missed
+    std::array<int64_t, 3> upcoming_{{-1, -1, -1}}; // song mode: the next notes, for the pad lights
     bool twinHalf_ = false;      // first pad of a twin is down
     int twinHalfRow_ = -1;
     double twinHalfDelta_ = 0;

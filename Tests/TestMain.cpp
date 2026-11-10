@@ -261,6 +261,16 @@ void testMidiSong() {
         if (i % 2 == 1) ++easyOff;
     }
     check(easyCues >= 24 && easyCues <= 30 && easyOff == 0, "level 1 plays the strong beats only");
+    // The pads are the instrument: the demo's eight pitches sit on eight pads,
+    // lowest at pad 1, and the easy chart moves across more than two of them.
+    int pads = 0, usedPads = 0;
+    std::vector<int> seen(16, 0);
+    for (int p = 0; p < 16; ++p) pads += easy.padPitch(p) >= 0 ? 1 : 0;
+    for (int64_t i = 0; i < easy.length(); ++i)
+        if (easy.at(i).cue && easy.at(i).pad >= 0) seen[static_cast<size_t>(easy.at(i).pad)] = 1;
+    for (int v : seen) usedPads += v;
+    check(pads >= 8 && easy.padPitch(0) < easy.padPitch(pads - 1), "melody pitches lie across the pads from low to high");
+    check(usedPads >= 4, "even the easy chart moves across the pads");
     lightfoot::Track course = lightfoot::Track::fromSong(*song, 5);
     int cues = 0, offBeatCues = 0;
     for (int64_t i = 0; i < course.length(); ++i) {
@@ -280,7 +290,7 @@ void testMidiSong() {
     lightfoot::Track hard = lightfoot::Track::fromSong(*song, 6);
     int decoys = 0;
     for (int64_t i = 0; i < hard.length(); ++i) decoys += hard.at(i).decoy >= 0 ? 1 : 0;
-    check(hard.level(0) == 6 && decoys > 0, "a song started at level 6 has decoys");
+    check(hard.level(0) == 6 && decoys == 0, "songs have no decoys: a wrong pad is already a wrong note");
     // Highest tune note is the top row, lowest the bottom row.
     int topRow = 9, bottomRow = -1;
     for (int64_t i = 0; i < course.length(); ++i)
@@ -344,12 +354,34 @@ void testMidiSong() {
         const int64_t cue = game.cueSlot();
         if (cue >= 0 && std::fabs(game.pos() - static_cast<double>(cue)) < 0.03) {
             const lightfoot::Slot s = game.track().at(cue);
-            loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
-            if (s.row2 >= 0) loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(s.row2, 0)));
+            loop.pushPadTap(s.pad);
+            if (s.pad2 >= 0) loop.push(lightfoot::panelmidi::padDown(s.pad2));
         }
         loop.step(now);
     }
     check(game.state() == lightfoot::Game::State::GameOver && game.songComplete(), "playing the whole song ends in SONG CLEAR");
+    // A wrong pad is a wrong note: the combo goes, a life does not.
+    {
+        lightfoot::Game g2;
+        g2.setStartLevel(1);
+        check(g2.loadSong(path), "song loads again");
+        lightfoot::HostLoop l2(g2);
+        int64_t t2 = 1000;
+        l2.step(t2);
+        g2.startGame(t2, 1);
+        while (g2.cueSlot() < 0 || g2.pos() < g2.cueSlot() - 0.05) {
+            t2 += 8;
+            l2.step(t2);
+        }
+        const lightfoot::Slot s = g2.track().at(g2.cueSlot());
+        const int wrong = (s.pad + 5) % 16;
+        l2.pushPadTap(wrong);
+        l2.step(t2 += 8);
+        check(g2.lastHit() == lightfoot::Game::Hit::Slip && g2.lives() == 3 && g2.score() == 0, "a wrong pad is a slip, not a hit");
+        l2.pushPadTap(s.pad);
+        l2.step(t2 += 8);
+        check(g2.score() > 0, "the right pad then plays the note");
+    }
     check(game.lives() == 3, "a perfectly tapped song loses no lives");
     check(game.level() >= 3 && spedUp, "a song rises through the levels and speeds up with them");
     check(game.scores().entries().front().song == "Lightfoot Demo", "the score remembers the song");

@@ -508,6 +508,65 @@ void Game::advance(int64_t nowMs) {
         if (state_ != State::Playing) return;
         findNextCue();
     }
+    if (song_) refreshUpcoming();
+}
+
+void Game::sourNote(int pad) {
+    const int pitch = track_.padPitch(pad);
+    if (pitch >= 0 && song_) engine_.noteOn(song_->melodyChannel, pitch, 40, 0.2);
+}
+
+void Game::judgeInstrument(int pad, const Frame& in, int64_t nowMs) {
+    // Song mode: the pads are the instrument. The pending note's pad is the
+    // one to hit; any other pad is a wrong note.
+    if (fallStart_ >= 0) return;
+    if (cueSlot_ < 0) {
+        sourNote(pad);
+        return;
+    }
+    const Slot s = track_.at(cueSlot_);
+    const bool match = pad == s.pad || (s.pad2 >= 0 && pad == s.pad2);
+    if (!match) {
+        bool early = false;
+        for (size_t i = 1; i < upcoming_.size(); ++i)
+            if (upcoming_[i] >= 0) {
+                const Slot u = track_.at(upcoming_[i]);
+                early |= pad == u.pad || pad == u.pad2;
+            }
+        sourNote(pad);
+        slip(early ? "EARLY" : "WRONG NOTE", nowMs);
+        return;
+    }
+    const double delta = pos_ - static_cast<double>(cueSlot_);
+    if (delta < -windowGood()) {
+        slip("EARLY", nowMs);
+        return;
+    }
+    padFlashMs_[static_cast<size_t>(pad)] = nowMs;
+    padFlashColor_[static_cast<size_t>(pad)] = palette_.white;
+    if (s.pad2 >= 0) {
+        const int other = pad == s.pad ? s.pad2 : s.pad;
+        const bool otherDown = in.padDown(other) || (twinHalf_ && twinHalfRow_ == other);
+        if (!otherDown) {
+            twinHalf_ = true;
+            twinHalfRow_ = pad; // a pad index in song mode
+            twinHalfDelta_ = delta;
+            return;
+        }
+        const double worst = std::max(std::fabs(delta), twinHalf_ ? std::fabs(twinHalfDelta_) : 0.0);
+        twinHalf_ = false;
+        resolve(worst <= windowPerfect() ? Hit::Perfect : Hit::Good, worst, nowMs);
+        return;
+    }
+    resolve(std::fabs(delta) <= windowPerfect() ? Hit::Perfect : Hit::Good, delta, nowMs);
+}
+
+void Game::refreshUpcoming() {
+    upcoming_ = {{cueSlot_, -1, -1}};
+    if (cueSlot_ < 0) return;
+    int found = 1;
+    for (int64_t k = cueSlot_ + 1; found < 3 && k < cueSlot_ + 64; ++k)
+        if (track_.at(k).cue) upcoming_[static_cast<size_t>(found++)] = k;
 }
 
 void Game::findNextCue() {
@@ -528,6 +587,10 @@ void Game::handlePads(const Frame& in, int64_t nowMs) {
 }
 
 void Game::judge(int row, int col, const Frame& in, int64_t nowMs) {
+    if (song_) {
+        judgeInstrument(padIndex(row, col), in, nowMs);
+        return;
+    }
     if (fallStart_ >= 0) return; // tumbling: nothing counts until the runner is back
     const int64_t base = columnBase();
     const int64_t k = base + col;
