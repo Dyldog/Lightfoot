@@ -25,7 +25,7 @@ the MPC is stock again. Firmware 1.3.0.12 only.
 ![How to play, as shown on the device](docs/screens/01-how-to.png)
 
 1. Press **PLAY**. Four beats count in, then the course begins.
-2. Each pad column is one beat ahead: the left column is now, the right column is three beats away. The lit pad in a column is the platform you must land on; its row is the platform's height, top row highest.
+2. Each pad column is one step ahead, a beat on the endless course and half a beat in a song with off-beat notes: the left column is now, the right column is three steps away. The lit pad in a column is the platform you must land on; its row is the platform's height, top row highest.
 3. When a lit pad reaches the left column, hit it **on the beat**. On time is PERFECT, close is GOOD. Only the lit pad counts: an unlit pad does nothing, a lit pad in a later column is EARLY and breaks your combo.
 4. Miss the beat and the runner falls. You lose a life and the combo, and the course carries on from the next platform. Three lives.
 5. Every 32 beats the level rises: faster, more jumps, then twins and decoys.
@@ -57,10 +57,15 @@ What the game does with a file:
 
 - The tempo map and time signature come from the file. The course runs at
   the song's tempo, speeding up and slowing down where the file does.
-- The tune is the channel with the most notes above the bass register. Each
-  note that lands on a beat becomes a jump, and its pitch picks the row:
-  the highest notes are the top row, the lowest the bottom row. A chord on
-  a beat becomes a long jump when the next beat is free.
+- The tune is the channel with the most notes above the bass register. Every
+  note becomes a jump, so you play the rhythm as written: a song with notes
+  between the beats runs in half-beat steps, with each pad column half a
+  beat. The pitch picks the row: the highest notes are the top row, the
+  lowest the bottom row. A chord becomes a long jump when the step after it
+  is free. Notes closer together than half a beat are thinned.
+- Levels rise every 32 beats as on the endless course. Each level plays the
+  song 5% faster, and from level 5 decoys appear. **K3** sets the start level
+  for songs too.
 - Every channel is played by the built-in synth: drums on channel 10 onto
   the kit, low notes as bass, long notes as pads, the rest as plucks. A file
   without drums gets a kick and hats underneath so the beat stays audible.
@@ -70,7 +75,7 @@ What the game does with a file:
 
 ![A song run: the tune picks the platforms, the bar shows how far in you are](docs/screens/09-song-run.png)
 
-> **Tip:** Files with one clear melody line and a steady beat make the best courses. Fast runs of sixteenth notes are thinned to one jump a beat.
+> **Tip:** Files with one clear melody line and a steady beat make the best courses. Sixteenth-note runs are thinned to eighths.
 
 ## Controls
 

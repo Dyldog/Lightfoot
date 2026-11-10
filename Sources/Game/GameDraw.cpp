@@ -50,13 +50,17 @@ int Game::rowY(int row) const {
     return 98 + std::clamp(row, 0, 3) * 26; // row 0 is the top row of pads: the highest platform
 }
 
+int Game::slotW() const {
+    return stepBeats() < 1.0 ? 40 : kSlotW;
+}
+
 int Game::xForSlot(double slotIndex) const {
-    return kRunnerX + static_cast<int>(std::lround((slotIndex - beat_) * kSlotW));
+    return kRunnerX + static_cast<int>(std::lround((slotIndex - pos_) * slotW()));
 }
 
 double Game::runnerY(double b) const {
     if (fallStart_ >= 0) {
-        const double t = std::max(0.0, b - fallStart_);
+        const double t = std::max(0.0, b - fallStart_) * stepBeats();
         return rowY(jumpFrom_) + 8 + t * t * 320;
     }
     if (!landed_ && jumpEnd_ > jumpStart_) {
@@ -181,7 +185,7 @@ void Game::drawSky(Canvas& canvas, int64_t nowMs, double scroll) {
 
 void Game::drawWorld(Canvas& canvas, int64_t nowMs) {
     const Palette& p = palette_;
-    const double scroll = beat_ * kSlotW;
+    const double scroll = pos_ * slotW();
     const int sx = shake_ > 0 ? static_cast<int>(std::sin(nowMs * 0.09) * shake_ * 4) : 0;
     const int sy = shake_ > 0 ? static_cast<int>(std::cos(nowMs * 0.07) * shake_ * 3) : 0;
     drawSky(canvas, nowMs, scroll);
@@ -201,9 +205,9 @@ void Game::drawWorld(Canvas& canvas, int64_t nowMs) {
 
     // Platforms: a slab per beat at its row, neon edge, glow beneath, and a
     // chevron where a jump is due. Twin cues sit on a gap.
-    const int64_t firstSlot = static_cast<int64_t>(std::floor(beat_)) - 2;
+    const int64_t firstSlot = static_cast<int64_t>(std::floor(pos_)) - 2;
     const float pulse = 0.5f + 0.5f * std::sin(nowMs * 0.012f);
-    for (int64_t k = firstSlot; k < firstSlot + 8; ++k) {
+    for (int64_t k = firstSlot; k < firstSlot + 4 + Canvas::width / slotW(); ++k) {
         const Slot& s = track_.at(std::max<int64_t>(k, 0));
         const int x0 = xForSlot(static_cast<double>(k)) + sx;
         const int x1 = xForSlot(static_cast<double>(k) + 1) - 3 + sx;
@@ -239,7 +243,7 @@ void Game::drawWorld(Canvas& canvas, int64_t nowMs) {
     }
 
     // Trail and runner.
-    const int ry = static_cast<int>(std::lround(runnerY(beat_))) + sy;
+    const int ry = static_cast<int>(std::lround(runnerY(pos_))) + sy;
     if (state_ == State::Playing && fallStart_ < 0 && (nowMs / 33) % 2 == 0) {
         const uint32_t trail = landed_ ? p.row[runnerRow_] : p.runnerTrail;
         particles_.push_back({static_cast<float>(kRunnerX - 4), static_cast<float>(ry - 6 - (nowSeed_() % 6)), -60.0f - (nowSeed_() % 40), 0.0f, 0.0f, 0.35f, trail, 1});
@@ -342,7 +346,7 @@ void Game::drawHud(Canvas& canvas, int64_t nowMs) {
         const double done = track_.length() > 0 ? std::clamp(static_cast<double>(slot_) / static_cast<double>(track_.length()), 0.0, 1.0) : 0.0;
         canvas.fillAlpha({5, 52, 70, 3}, p.textDim, 90);
         canvas.fill({5, 52, static_cast<int>(70 * done), 3}, p.accent);
-        std::snprintf(buf, sizeof buf, "%.0f BPM%s", engine_.tempo(), assist_ < 0.999f ? " ASSIST" : "");
+        std::snprintf(buf, sizeof buf, "LEVEL %d  %.0f BPM%s", level_, engine_.tempo(), assist_ < 0.999f ? " ASSIST" : "");
         canvas.text(80, 48, buf, p.textDim, Font::Small);
     } else {
         std::snprintf(buf, sizeof buf, "LEVEL %d   %.0f BPM%s", level_, track_.tempoFor(level_) * assist_, assist_ < 0.999f ? "   ASSIST" : "");
@@ -631,7 +635,7 @@ uint32_t Game::padColor(int pad, int64_t nowMs) const {
         const bool lit = row == s.row || row == s.row2;
         if (lit) {
             float level;
-            if (col == 0) level = 0.55f + 0.45f * static_cast<float>(1.0 - beatPhase());
+            if (col == 0) level = 0.55f + 0.45f * static_cast<float>(1.0 - stepPhase());
             else level = 0.42f - col * 0.1f;
             if (state_ == State::Paused) level *= 0.3f;
             if (twinHalf_ && col == 0 && row == twinHalfRow_) level = 1.0f;

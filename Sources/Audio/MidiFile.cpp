@@ -282,6 +282,8 @@ bool MidiSong::writeDemo(const std::string& path) {
                 const int idx = (bar * 4 + beat) % 32;
                 const bool rest = (bar % 4 == 3 && beat == 3);
                 if (!rest) note(t, 0, tune[idx], 100, beat % 2 ? 60 : 90); // tune on channel 1
+                // Off-beat pickups on beats 2 and 4 of every other bar: the rhythm is the game.
+                if (bar % 2 == 1 && (beat == 1 || beat == 3)) note(t + 48, 0, tune[(idx + 1) % 32] - 2, 85, 40);
             }
         }
     }

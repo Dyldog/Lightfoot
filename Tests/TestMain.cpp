@@ -240,7 +240,7 @@ void testMidiSong() {
     int tuneNotes = 0;
     for (const auto& n : song->notes)
         if (n.channel == 0) ++tuneNotes;
-    check(tuneNotes == 14 * 4 - 4, "every tune note with a length");
+    check(tuneNotes == 14 * 4 - 4 + 7 * 2, "every tune note with a length");
     // Running status, a note held past the end, and junk are all handled.
     std::vector<uint8_t> junk = {'M', 'T', 'h', 'x'};
     check(lightfoot::MidiSong::parse(junk, &error) == nullptr, "junk is refused");
@@ -251,11 +251,21 @@ void testMidiSong() {
 
     // The course follows the tune: cues on beats where the tune plays, rows from pitch.
     lightfoot::Track course = lightfoot::Track::fromSong(*song);
-    check(course.finite() && course.length() >= 64, "a song course is finite and song-length");
-    int cues = 0;
-    for (int64_t i = 0; i < course.length(); ++i) cues += course.at(i).cue ? 1 : 0;
-    check(cues >= 20 && cues <= 56, "the tune gives a playable number of jumps");
-    check(!course.at(2).cue && course.at(course.length() + 50).cue == false, "no jumps before bar 2 or after the end");
+    check(course.finite() && course.stepBeats() == 0.5 && course.length() >= 128, "a song with off-beat notes runs in half-beat steps");
+    int cues = 0, offBeatCues = 0;
+    for (int64_t i = 0; i < course.length(); ++i) {
+        if (!course.at(i).cue) continue;
+        ++cues;
+        if (i % 2 == 1) ++offBeatCues;
+    }
+    check(cues >= 50 && cues <= 70, "every tune note is a jump");
+    check(offBeatCues == 14, "the off-beat pickups are jumps between the beats");
+    check(!course.at(4).cue && course.at(course.length() + 50).cue == false, "no jumps before bar 2 or after the end");
+    check(course.level(0) == 1 && course.level(64) == 2 && course.level(128) == 3, "song levels still change every 32 beats");
+    lightfoot::Track hard = lightfoot::Track::fromSong(*song, 6);
+    int decoys = 0;
+    for (int64_t i = 0; i < hard.length(); ++i) decoys += hard.at(i).decoy >= 0 ? 1 : 0;
+    check(hard.level(0) == 6 && decoys > 0, "a song started at level 6 has decoys");
     // Highest tune note is the top row, lowest the bottom row.
     int topRow = 9, bottomRow = -1;
     for (int64_t i = 0; i < course.length(); ++i)
@@ -285,10 +295,12 @@ void testMidiSong() {
     game.engine().setAttached(false);
     // Let the run go on unattended: misses end it before the song does, so the
     // completion path is tested with a tapper.
+    bool spedUp = false;
     while (game.state() == lightfoot::Game::State::Playing && now < 600000) {
-        now += 16;
+        now += 8;
+        spedUp |= game.engine().tempo() > 112.5;
         const int64_t cue = game.cueSlot();
-        if (cue >= 0 && std::fabs(game.beat() - static_cast<double>(cue)) < 0.03) {
+        if (cue >= 0 && std::fabs(game.pos() - static_cast<double>(cue)) < 0.03) {
             const lightfoot::Slot s = game.track().at(cue);
             loop.pushPadTap(lightfoot::Game::padIndex(s.row, 0));
             if (s.row2 >= 0) loop.push(lightfoot::panelmidi::padDown(lightfoot::Game::padIndex(s.row2, 0)));
@@ -297,6 +309,7 @@ void testMidiSong() {
     }
     check(game.state() == lightfoot::Game::State::GameOver && game.songComplete(), "playing the whole song ends in SONG CLEAR");
     check(game.lives() == 3, "a perfectly tapped song loses no lives");
+    check(game.level() >= 3 && spedUp, "a song rises through the levels and speeds up with them");
     check(game.scores().entries().front().song == "Lightfoot Demo", "the score remembers the song");
     unsetenv("LIGHTFOOT_ROOT");
 }

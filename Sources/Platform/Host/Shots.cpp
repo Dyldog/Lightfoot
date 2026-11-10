@@ -68,7 +68,7 @@ int runShots(const std::string& dir, int scale) {
         if (game.state() == Game::State::GameOver) break;
         const bool tapping = step < 1500; // then stop playing and let the run end
         const int64_t cue = game.cueSlot();
-        if (tapping && cue >= 0 && std::abs(game.beat() - static_cast<double>(cue)) < 0.02) {
+        if (tapping && cue >= 0 && std::abs(game.pos() - static_cast<double>(cue)) < 0.02) {
             const Slot& slot = game.track().at(cue);
             loop.pushPadTap(Game::padIndex(slot.row, 0));
             if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));
@@ -110,7 +110,7 @@ int runShots(const std::string& dir, int scale) {
     for (int step = 0; step < 1300 && game.state() == Game::State::Playing; ++step) {
         s.frame(loop);
         const int64_t cue = game.cueSlot();
-        if (cue >= 0 && std::abs(game.beat() - static_cast<double>(cue)) < 0.02) {
+        if (cue >= 0 && std::abs(game.pos() - static_cast<double>(cue)) < 0.03) {
             const Slot slot = game.track().at(cue);
             loop.pushPadTap(Game::padIndex(slot.row, 0));
             if (slot.row2 >= 0) loop.pushPadTap(Game::padIndex(slot.row2, 0));

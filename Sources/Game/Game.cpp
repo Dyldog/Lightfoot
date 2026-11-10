@@ -140,16 +140,32 @@ void Game::setStartLevel(int level) {
 
 // MARK: - Timing helpers
 
+double Game::stepBeats() const {
+    return track_.stepBeats();
+}
+
+double Game::songSpeed() const {
+    return 1.0 + 0.05 * (level_ - 1);
+}
+
+// Windows are in steps. In seconds they shrink when steps are short, so two
+// neighbouring cues never share a window.
 double Game::windowGood() const {
-    return kGoodSeconds * engine_.tempo() / 60.0;
+    const double stepSeconds = stepBeats() * 60.0 / std::max(30.0, engine_.tempo());
+    return std::min(kGoodSeconds, 0.42 * stepSeconds) / stepSeconds;
 }
 
 double Game::windowPerfect() const {
-    return kPerfectSeconds * engine_.tempo() / 60.0;
+    const double stepSeconds = stepBeats() * 60.0 / std::max(30.0, engine_.tempo());
+    return std::min(kPerfectSeconds, 0.2 * stepSeconds) / stepSeconds;
 }
 
 double Game::beatPhase() const {
     return beat_ - std::floor(beat_);
+}
+
+double Game::stepPhase() const {
+    return pos_ - std::floor(pos_);
 }
 
 int64_t Game::columnBase() const {
@@ -189,7 +205,7 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
     if (seed == 0) seed = static_cast<uint32_t>(nowMs * 2654435761u) | 1u;
     songComplete_ = false;
     if (song_) {
-        track_ = Track::fromSong(*song_);
+        track_ = Track::fromSong(*song_, startLevel_);
         engine_.setSong(song_.get());
     } else {
         track_ = Track(seed, startLevel_);
@@ -198,8 +214,9 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
     score_ = combo_ = maxCombo_ = 0;
     perfects_ = goods_ = misses_ = slips_ = 0;
     lives_ = 3;
-    level_ = song_ ? 1 : startLevel_;
-    slot_ = -static_cast<int64_t>(kCountIn) - 1;
+    level_ = startLevel_;
+    slot_ = -static_cast<int64_t>(kCountIn / track_.stepBeats()) - 1;
+    lastCount_ = 0;
     cueSlot_ = -1;
     resolvedUpTo_ = -1;
     twinHalf_ = false;
@@ -218,6 +235,7 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
     gameStartMs_ = nowMs;
     engine_.resetBeat(-kCountIn);
     beat_ = -kCountIn;
+    pos_ = beat_ / track_.stepBeats();
     setState(State::Playing, nowMs);
     applyLevel(level_, false, nowMs);
     engine_.setBrightness(0);
@@ -227,11 +245,11 @@ void Game::startGame(int64_t nowMs, uint32_t seed) {
 
 void Game::applyLevel(int level, bool announce, int64_t nowMs) {
     level_ = level;
-    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) : track_.tempoFor(level)) * assist_);
+    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) * songSpeed() : track_.tempoFor(level)) * assist_);
     engine_.setIntensity(level);
     if (announce) {
         char text[48];
-        if (song_) std::snprintf(text, sizeof text, "LEVEL %d", level);
+        if (song_) std::snprintf(text, sizeof text, "LEVEL %d   x%.2f", level, songSpeed());
         else std::snprintf(text, sizeof text, "LEVEL %d   %.0f BPM", level, track_.tempoFor(level));
         banner_ = text;
         bannerUntil_ = nowMs + 1800;
@@ -442,7 +460,7 @@ void Game::updatePlaying(Canvas& canvas, const Frame& in, int64_t nowMs) {
         setState(State::Paused, nowMs);
         return;
     }
-    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) : track_.tempoFor(level_)) * assist_);
+    engine_.setTempo((song_ ? song_->tempoAt(std::max(0.0, beat_)) * songSpeed() : track_.tempoFor(level_)) * assist_);
     advance(nowMs);
     if (state_ != State::Playing) return; // the run ended inside advance
     handlePads(in, nowMs);
@@ -451,7 +469,8 @@ void Game::updatePlaying(Canvas& canvas, const Frame& in, int64_t nowMs) {
 void Game::advance(int64_t nowMs) {
     const double latencyBeats = kOutputLatency * engine_.tempo() / 60.0;
     beat_ = engine_.beat(nowMs) - latencyBeats;
-    const int64_t newSlot = static_cast<int64_t>(std::floor(beat_));
+    pos_ = beat_ / stepBeats();
+    const int64_t newSlot = static_cast<int64_t>(std::floor(pos_));
     if (newSlot != slot_) {
         slot_ = newSlot;
         if (slot_ >= 0) {
@@ -461,12 +480,17 @@ void Game::advance(int64_t nowMs) {
         if (slot_ == 0) {
             banner_ = "GO";
             bannerUntil_ = nowMs + 600;
-        } else if (slot_ < 0 && slot_ >= -3) {
-            banner_ = std::to_string(-slot_);
+        }
+    }
+    if (beat_ < 0) {
+        const int count = static_cast<int>(std::ceil(-beat_ - 1e-9));
+        if (count >= 1 && count <= 3 && count != lastCount_) {
+            lastCount_ = count;
+            banner_ = std::to_string(count);
             bannerUntil_ = nowMs + 500;
         }
     }
-    if (!landed_ && beat_ >= jumpEnd_) {
+    if (!landed_ && pos_ >= jumpEnd_) {
         landed_ = true;
         engine_.trigger(Sfx::Land);
         spawnBurst(96, static_cast<float>(rowY(runnerRow_)), palette_.row[runnerRow_], 8, 40);
@@ -476,9 +500,9 @@ void Game::advance(int64_t nowMs) {
         endGame(nowMs);
         return;
     }
-    if (fallStart_ >= 0 && beat_ >= fallStart_ + 0.8) fallStart_ = -1;
+    if (fallStart_ >= 0 && pos_ >= fallStart_ + 0.8 / stepBeats()) fallStart_ = -1;
     findNextCue();
-    while (cueSlot_ >= 0 && beat_ > cueSlot_ + windowGood()) {
+    while (cueSlot_ >= 0 && pos_ > cueSlot_ + windowGood()) {
         miss(nowMs);
         if (state_ != State::Playing) return;
         findNextCue();
@@ -518,7 +542,7 @@ void Game::judge(int row, int col, const Frame& in, int64_t nowMs) {
         return;
     }
     if (row != s.row && row != s.row2) return; // an unlit pad does nothing
-    const double delta = beat_ - static_cast<double>(k);
+    const double delta = pos_ - static_cast<double>(k);
     if (delta < -windowGood()) {
         slip("EARLY", nowMs);
         return;
@@ -560,7 +584,7 @@ void Game::resolve(Hit hit, double deltaBeats, int64_t nowMs) {
 
     jumpFrom_ = runnerRow_;
     jumpTo_ = s.row;
-    jumpStart_ = beat_;
+    jumpStart_ = pos_;
     jumpEnd_ = static_cast<double>(cueSlot_) + (twin ? 1.5 : 0.5);
     if (jumpEnd_ < jumpStart_ + 0.25) jumpEnd_ = jumpStart_ + 0.25;
     landed_ = false;
@@ -600,7 +624,7 @@ void Game::miss(int64_t nowMs) {
     twinHalf_ = false;
     lastHit_ = Hit::Miss;
     lastHitMs_ = nowMs;
-    const bool graced = beat_ < graceUntil_;
+    const bool graced = pos_ < graceUntil_;
     if (graced) {
         addText("MISS", 96, static_cast<float>(rowY(runnerRow_) - 30), palette_.textDim, 0);
     } else {
@@ -609,8 +633,8 @@ void Game::miss(int64_t nowMs) {
         shake_ = 1.0f;
         flash_ = 0.6f;
         flashColor_ = palette_.danger;
-        fallStart_ = beat_;
-        graceUntil_ = static_cast<double>(cueSlot_) + 3.0;
+        fallStart_ = pos_;
+        graceUntil_ = static_cast<double>(cueSlot_) + 3.0 / stepBeats();
         addText(lives_ > 0 ? "MISS" : "MISS  GAME OVER", 96, static_cast<float>(rowY(runnerRow_) - 30), palette_.danger, 1);
         for (size_t p = 0; p < 16; ++p) {
             padFlashMs_[p] = nowMs;

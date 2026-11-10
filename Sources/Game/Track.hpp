@@ -29,7 +29,7 @@ public:
     explicit Track(uint32_t seed = 1, int startLevel = 1);
     /// A fixed course: the melody of a song, one cue per beat at most, the row
     /// following the pitch. Beyond the end the course is plain running.
-    static Track fromSong(const class MidiSong& song);
+    static Track fromSong(const class MidiSong& song, int startLevel = 1);
 
     bool finite() const { return finite_; }
     int64_t length() const { return length_; }
@@ -38,7 +38,10 @@ public:
 
     /// By value: the course grows as it is read, so a reference would not survive.
     Slot at(int64_t index);
-    int level(int64_t index) const { return startLevel_ + static_cast<int>(index / kSlotsPerLevel); }
+    /// Levels change every 32 beats whatever the step size.
+    int level(int64_t index) const { return startLevel_ + static_cast<int>(index * stepBeats_ / kSlotsPerLevel); }
+    /// Beats per slot: 1 on the endless course, 0.5 for a song with notes off the beat.
+    double stepBeats() const { return stepBeats_; }
     double tempoFor(int level) const;
     int startLevel() const { return startLevel_; }
     uint32_t seed() const { return seed_; }
@@ -54,6 +57,7 @@ private:
     std::vector<Slot> slots_;
     int lastCueAt_ = -100;
     bool finite_ = false;
+    double stepBeats_ = 1.0;
     int64_t length_ = 0;
     int beatsPerBar_ = 4;
     std::string songName_;

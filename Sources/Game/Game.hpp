@@ -49,6 +49,11 @@ public:
     int lives() const { return lives_; }
     int level() const { return level_; }
     double beat() const { return beat_; }
+    /// Position in course steps (a step is a beat, or half a beat in a song with off-beat notes).
+    double pos() const { return pos_; }
+    double stepBeats() const;
+    /// How fast a song is being played relative to the file: 5% more a level.
+    double songSpeed() const;
     int64_t slot() const { return slot_; }
     int64_t cueSlot() const { return cueSlot_; }
     Hit lastHit() const { return lastHit_; }
@@ -136,6 +141,8 @@ private:
     int xForSlot(double slotIndex) const;
     int64_t columnBase() const;
     double beatPhase() const;
+    double stepPhase() const;
+    int slotW() const;
 
     AudioEngine engine_;
     mutable Track track_; // generated lazily, so drawing may extend it
@@ -163,6 +170,8 @@ private:
 
     // The run
     double beat_ = 0;            // heard beat: the engine's clock less output latency
+    double pos_ = 0;             // the same, in course steps
+    int lastCount_ = 0;          // count-in number last shown
     int64_t slot_ = -1;          // beat the runner is on
     int64_t cueSlot_ = -1;       // the jump awaiting a hit, -1 when none
     int64_t resolvedUpTo_ = -1;  // last cue judged, hit or missed
