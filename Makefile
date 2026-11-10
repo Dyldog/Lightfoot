@@ -104,7 +104,7 @@ test: $(TESTBIN) shots
 
 # The manual: MANUAL.md is the source, the PDF is generated and ships on the card.
 MANUAL_PDF := $(BUILD)/manual/$(PRODUCT)-Manual.pdf
-SCREENS := 00-title 01-how-to 02-playing 03-perfect 05-paused 06-game-over 07-scores 08-songs 09-song-run
+SCREENS := 00-title 01-how-to 02-playing 03-perfect 05-paused 06-game-over 07-scores 08-songs 08b-song-info 09-song-run
 
 screens: shots
 	@mkdir -p docs/screens

@@ -51,14 +51,21 @@ runs.
 
 Press **SONGS** on the title (**B2**, or the wheel). The list shows the
 endless course first, then every song in the folder, then **Browse the
-card**. Press the wheel or **PLAY** on a song to start it straight away.
+card**. Choosing a song opens its page: tempo, length, and the **lead
+instrument**, the line you will play. The game guesses it from the file,
+preferring a single-note line in the singing register on a melody
+instrument that is there for most of the song, and lists the other channels
+in order. If it picked a guitar riff instead of the vocal line, turn the
+wheel to the right one; the choice is remembered for that song. **PLAY** or
+the wheel press starts.
+
+![A song's page: the lead instrument the game will hand you](docs/screens/08b-song-info.png)
 
 What the game does with a file:
 
 - The tempo map and time signature come from the file. The course runs at
   the song's tempo, speeding up and slowing down where the file does.
-- The tune is the channel with the most notes above the bass register. Its
-  notes become the jumps, so you play the rhythm as written: a song with
+- The lead instrument's notes become the jumps, so you play the rhythm as written: a song with
   notes between the beats runs in half-beat steps, with each pad column half
   a beat. The rows follow the shape of the tune rather than its pitch: a
   note higher than the last is one row up, a lower one a row down, the same

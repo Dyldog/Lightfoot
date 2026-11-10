@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,7 +30,7 @@ class Frame;
 /// decoys. Three lives, levels every 32 beats, scores on the card.
 class Game {
 public:
-    enum class State { Title, HowTo, Scores, Songs, Browse, Playing, Paused, GameOver };
+    enum class State { Title, HowTo, Scores, Songs, Browse, SongInfo, Playing, Paused, GameOver };
     enum class Hit { None, Perfect, Good, Early, Slip, Miss };
 
     Game();
@@ -97,6 +98,8 @@ private:
     void updateTitle(Canvas& canvas, const Frame& in, int64_t nowMs);
     void updateSongs(Canvas& canvas, const Frame& in, int64_t nowMs);
     void updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs);
+    void updateSongInfo(Canvas& canvas, const Frame& in, int64_t nowMs);
+    void drawSongInfo(Canvas& canvas, int64_t nowMs);
     void refreshSongList();
     void ensureDemoSong();
     void openBrowser();
@@ -166,6 +169,8 @@ private:
     bool songComplete_ = false;
     std::vector<std::string> songFiles_;
     int songCursor_ = 0;
+    int leadCursor_ = 0;                    // index into song_->candidates on the song screen
+    std::map<std::string, int> leadChoice_; // remembered lead channel per song name
     std::unique_ptr<ui_filebrowser> browser_;
     std::string browserTitle_, browserExternal_, browserInternal_, browserStart_;
 

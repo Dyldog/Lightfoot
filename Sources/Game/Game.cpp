@@ -60,12 +60,17 @@ void Game::loadSettings() {
     const Json j = Json::parse(text);
     hue_ = static_cast<float>(j["hue"].asNumber(0));
     startLevel_ = std::clamp(j["startLevel"].asInt(1), 1, 8);
+    const Json& leads = j["leads"];
+    for (const std::string& key : leads.keys()) leadChoice_[key] = leads[key].asInt(-1);
 }
 
 void Game::saveSettings() const {
     Json j = Json::object();
     j.set("hue", static_cast<double>(hue_));
     j.set("startLevel", startLevel_);
+    Json leads = Json::object();
+    for (const auto& kv : leadChoice_) leads.set(kv.first, kv.second);
+    j.set("leads", leads);
     paths::makeDirs(paths::dataDir());
     paths::writeFileAtomic(paths::join(paths::dataDir(), "settings.json"), j.dump(2) + "\n");
 }
@@ -94,6 +99,13 @@ bool Game::loadSong(const std::string& path) {
         return false;
     }
     song->trimLeadIn(4);
+    // A lead picked by hand earlier wins over the guess.
+    const auto remembered = leadChoice_.find(song->name);
+    if (remembered != leadChoice_.end() && remembered->second >= 0 && remembered->second < 16 && song->channels[static_cast<size_t>(remembered->second)].notes > 0)
+        song->setMelodyChannel(remembered->second);
+    leadCursor_ = 0;
+    for (size_t i = 0; i < song->candidates.size(); ++i)
+        if (song->candidates[i] == song->melodyChannel) leadCursor_ = static_cast<int>(i);
     loadedSongs_.push_back(song);
     if (loadedSongs_.size() > 8) loadedSongs_.erase(loadedSongs_.begin());
     song_ = song;
@@ -185,6 +197,7 @@ void Game::setState(State s, int64_t nowMs) {
     case State::Scores:
     case State::Songs:
     case State::Browse:
+    case State::SongInfo:
     case State::GameOver:
         engine_.setPaused(false);
         engine_.setMode(AudioEngine::Mode::Menu);
@@ -321,6 +334,7 @@ void Game::update(Canvas& canvas, const Frame& in, int64_t nowMs) {
     case State::Title: updateTitle(canvas, in, nowMs); break;
     case State::Songs: updateSongs(canvas, in, nowMs); break;
     case State::Browse: updateBrowser(canvas, in, nowMs); break;
+    case State::SongInfo: updateSongInfo(canvas, in, nowMs); break;
     case State::HowTo:
     case State::Scores:
         if (in.pressed(IN_PLAY)) startGame(nowMs);
@@ -424,7 +438,31 @@ void Game::updateSongs(Canvas& canvas, const Frame& in, int64_t nowMs) {
         return;
     }
     const std::string path = paths::join(songsDir(), songFiles_[static_cast<size_t>(songCursor_ - 1)]);
-    if (loadSong(path)) startGame(nowMs);
+    if (loadSong(path)) setState(State::SongInfo, nowMs);
+}
+
+void Game::updateSongInfo(Canvas& canvas, const Frame& in, int64_t nowMs) {
+    (void)canvas;
+    if (!song_) {
+        setState(State::Songs, nowMs);
+        return;
+    }
+    const int count = static_cast<int>(song_->candidates.size());
+    if (const int d = in.encoder(); d && count > 0) {
+        leadCursor_ = std::clamp(leadCursor_ + d, 0, std::min(count, 8) - 1);
+        song_->setMelodyChannel(song_->candidates[static_cast<size_t>(leadCursor_)]);
+        leadChoice_[song_->name] = song_->melodyChannel;
+        engine_.trigger(Sfx::Tick);
+    }
+    if (in.pressed(IN_B1) || in.pressed(IN_STOP)) {
+        engine_.trigger(Sfx::Select);
+        setState(State::Songs, nowMs);
+        return;
+    }
+    if (in.pressed(IN_PLAY) || in.pressed(IN_B3) || in.encoderPressed()) {
+        saveSettings();
+        startGame(nowMs);
+    }
 }
 
 void Game::updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs) {
@@ -450,7 +488,7 @@ void Game::updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs) {
         const std::string path = browser_->selected_path;
         if (loadSong(path)) {
             browser_.reset();
-            startGame(nowMs);
+            setState(State::SongInfo, nowMs);
         }
     }
 }

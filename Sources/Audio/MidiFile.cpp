@@ -91,6 +91,7 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
     auto song = std::make_shared<MidiSong>();
     std::vector<RawTempo> rawTempos;
     std::string firstTrackName;
+    for (auto& c : song->channels) c = ChannelInfo{};
     struct Pending {
         uint64_t tick;
         int velocity;
@@ -104,6 +105,8 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
         const size_t end = std::min(bytes.size(), r.pos + len);
         uint64_t tick = 0;
         uint8_t running = 0;
+        int trackLyrics = 0;
+        std::array<bool, 16> trackChannels{};
         std::map<int, std::vector<Pending>> open; // key: channel * 128 + note
         while (r.pos < end && r.ok) {
             tick += r.varlen();
@@ -129,6 +132,8 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
                     const uint32_t denPow = r.u8();
                     if (tick == 0 && num >= 2 && num <= 12) song->beatsPerBar = denPow == 3 ? static_cast<int>(num) / 2 : static_cast<int>(num);
                     if (song->beatsPerBar < 2) song->beatsPerBar = 4;
+                } else if (type == 0x05 || type == 0x01) {
+                    if (type == 0x05) ++trackLyrics;
                 } else if (type == 0x03 && firstTrackName.empty() && mlen > 0) {
                     firstTrackName.assign(reinterpret_cast<const char*>(&bytes[r.pos]), std::min<size_t>(mlen, bytes.size() - r.pos));
                 }
@@ -145,7 +150,11 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
             const int channel = status & 0x0f;
             const uint32_t d1 = r.u8();
             const uint32_t d2 = (kind == 0xc0 || kind == 0xd0) ? 0 : r.u8();
+            if (kind == 0xc0) {
+                if (song->channels[static_cast<size_t>(channel)].program < 0) song->channels[static_cast<size_t>(channel)].program = static_cast<int>(d1);
+            }
             if (kind == 0x90 && d2 > 0) {
+                trackChannels[static_cast<size_t>(channel)] = true;
                 open[channel * 128 + static_cast<int>(d1)].push_back({tick, static_cast<int>(d2)});
             } else if (kind == 0x80 || (kind == 0x90 && d2 == 0)) {
                 auto it = open.find(channel * 128 + static_cast<int>(d1));
@@ -173,6 +182,8 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
                 n.velocity = p.velocity;
                 song->notes.push_back(n);
             }
+        for (int c = 0; c < 16; ++c)
+            if (trackChannels[static_cast<size_t>(c)]) song->channels[static_cast<size_t>(c)].lyrics += trackLyrics;
         r.pos = end;
     }
     if (song->notes.empty()) {
@@ -192,35 +203,110 @@ std::shared_ptr<MidiSong> MidiSong::parse(const std::vector<uint8_t>& bytes, std
     return song;
 }
 
+namespace {
+// How much a General MIDI program sounds like a lead line. Leads, pipes,
+// reeds, voices and brass carry tunes; basses, pads and effects do not.
+float programLeadBonus(int program) {
+    if (program < 0) return 0;
+    if (program <= 7) return 0.5f;      // pianos
+    if (program <= 15) return 0.2f;     // chromatic percussion
+    if (program <= 23) return 0.3f;     // organs
+    if (program <= 25) return -0.3f;    // acoustic guitars
+    if (program <= 31) return -0.8f;    // electric guitars: usually rhythm
+    if (program <= 39) return -3.0f;    // basses
+    if (program <= 47) return 0.5f;     // solo strings
+    if (program <= 51) return -0.5f;    // string ensembles
+    if (program <= 54) return 1.0f;     // voices
+    if (program == 55) return -1.0f;    // orchestra hit
+    if (program <= 63) return 0.8f;     // brass
+    if (program <= 71) return 1.0f;     // reeds
+    if (program <= 79) return 1.2f;     // pipes (the karaoke flute)
+    if (program <= 87) return 1.2f;     // synth leads
+    if (program <= 95) return -1.5f;    // pads
+    if (program <= 103) return -1.5f;   // effects
+    if (program <= 111) return 0.3f;    // ethnic
+    if (program <= 119) return -1.5f;   // percussive
+    return -3.0f;                       // sound effects
+}
+} // namespace
+
+const char* MidiSong::programName(int program) {
+    static const char* const names[128] = {
+        "Grand Piano", "Bright Piano", "Electric Grand", "Honky-tonk", "E.Piano 1", "E.Piano 2", "Harpsichord", "Clavinet",
+        "Celesta", "Glockenspiel", "Music Box", "Vibraphone", "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
+        "Drawbar Organ", "Perc Organ", "Rock Organ", "Church Organ", "Reed Organ", "Accordion", "Harmonica", "Tango Accordion",
+        "Nylon Guitar", "Steel Guitar", "Jazz Guitar", "Clean Guitar", "Muted Guitar", "Overdrive Gtr", "Distortion Gtr", "Gtr Harmonics",
+        "Acoustic Bass", "Finger Bass", "Pick Bass", "Fretless Bass", "Slap Bass 1", "Slap Bass 2", "Synth Bass 1", "Synth Bass 2",
+        "Violin", "Viola", "Cello", "Contrabass", "Tremolo Str", "Pizzicato", "Harp", "Timpani",
+        "Strings 1", "Strings 2", "Synth Str 1", "Synth Str 2", "Choir Aahs", "Voice Oohs", "Synth Voice", "Orchestra Hit",
+        "Trumpet", "Trombone", "Tuba", "Muted Trumpet", "French Horn", "Brass", "Synth Brass 1", "Synth Brass 2",
+        "Soprano Sax", "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet",
+        "Piccolo", "Flute", "Recorder", "Pan Flute", "Bottle", "Shakuhachi", "Whistle", "Ocarina",
+        "Square Lead", "Saw Lead", "Calliope", "Chiff", "Charang", "Voice Lead", "Fifths", "Bass+Lead",
+        "New Age Pad", "Warm Pad", "Polysynth", "Choir Pad", "Bowed Pad", "Metallic Pad", "Halo Pad", "Sweep Pad",
+        "Rain", "Soundtrack", "Crystal", "Atmosphere", "Brightness", "Goblins", "Echoes", "Sci-fi",
+        "Sitar", "Banjo", "Shamisen", "Koto", "Kalimba", "Bagpipe", "Fiddle", "Shanai",
+        "Tinkle Bell", "Agogo", "Steel Drums", "Woodblock", "Taiko", "Melodic Tom", "Synth Drum", "Reverse Cymbal",
+        "Fret Noise", "Breath", "Seashore", "Bird", "Telephone", "Helicopter", "Applause", "Gunshot",
+    };
+    return program >= 0 && program < 128 ? names[program] : "Unknown";
+}
+
 void MidiSong::analyse() {
     hasDrums = false;
     lengthBeats = 0;
-    std::array<int, 16> count{};
+    for (auto& c : channels) {
+        c.notes = 0;
+        c.meanPitch = 0;
+        c.monophony = 0;
+        c.coverage = 0;
+        c.score = 0;
+    }
     std::array<double, 16> pitchSum{};
-    for (const MidiNote& n : notes) {
-        lengthBeats = std::max(lengthBeats, n.beat + n.length);
+    std::array<int, 16> onsets{}, soloOnsets{};
+    std::array<std::vector<char>, 16> barsHit{};
+    for (const MidiNote& n : notes) lengthBeats = std::max(lengthBeats, n.beat + n.length);
+    const int bars = std::max(1, static_cast<int>(std::ceil(lengthBeats / std::max(1, beatsPerBar))));
+    for (auto& b : barsHit) b.assign(static_cast<size_t>(bars), 0);
+    for (size_t i = 0; i < notes.size(); ++i) {
+        const MidiNote& n = notes[i];
+        const size_t c = static_cast<size_t>(n.channel);
         if (n.channel == 9) {
             hasDrums = true;
             continue;
         }
-        ++count[static_cast<size_t>(n.channel)];
-        pitchSum[static_cast<size_t>(n.channel)] += n.note;
-    }
-    // The tune: the busiest channel that sits above the bass register, else the busiest.
-    melodyChannel = -1;
-    int best = 0;
-    for (int c = 0; c < 16; ++c) {
-        if (c == 9 || count[static_cast<size_t>(c)] < 8) continue;
-        const double mean = pitchSum[static_cast<size_t>(c)] / count[static_cast<size_t>(c)];
-        const int score = count[static_cast<size_t>(c)] * (mean >= 55 ? 2 : 1);
-        if (score > best) {
-            best = score;
-            melodyChannel = c;
+        ++channels[c].notes;
+        pitchSum[c] += n.note;
+        const int bar = std::clamp(static_cast<int>(n.beat / beatsPerBar), 0, bars - 1);
+        barsHit[c][static_cast<size_t>(bar)] = 1;
+        // An onset is solo when no other note of the channel starts within a 32nd.
+        const bool prevSame = i > 0 && notes[i - 1].channel == n.channel && n.beat - notes[i - 1].beat < 0.125;
+        const bool nextSame = i + 1 < notes.size() && notes[i + 1].channel == n.channel && notes[i + 1].beat - n.beat < 0.125;
+        if (!prevSame) {
+            ++onsets[c];
+            if (!nextSame) ++soloOnsets[c];
         }
     }
-    if (melodyChannel < 0)
-        for (int c = 0; c < 16; ++c)
-            if (c != 9 && count[static_cast<size_t>(c)] > 0 && (melodyChannel < 0 || count[static_cast<size_t>(c)] > count[static_cast<size_t>(melodyChannel)])) melodyChannel = c;
+    candidates.clear();
+    for (int c = 0; c < 16; ++c) {
+        ChannelInfo& info = channels[static_cast<size_t>(c)];
+        if (c == 9 || info.notes == 0) continue;
+        info.meanPitch = pitchSum[static_cast<size_t>(c)] / info.notes;
+        info.monophony = onsets[static_cast<size_t>(c)] ? static_cast<float>(soloOnsets[static_cast<size_t>(c)]) / onsets[static_cast<size_t>(c)] : 0.0f;
+        int hit = 0;
+        for (char b : barsHit[static_cast<size_t>(c)]) hit += b;
+        info.coverage = static_cast<float>(hit) / bars;
+        // Lead-likeness: one note at a time, in the singing register, on a
+        // melody instrument, present through the song, with lyrics attached.
+        const float registerScore = static_cast<float>(std::clamp((info.meanPitch - 48.0) / 24.0, 0.0, 1.0));
+        float score = 3.0f * info.monophony + 2.0f * registerScore + programLeadBonus(info.program) + 1.5f * info.coverage;
+        if (info.lyrics > 8) score += 2.0f;
+        if (info.notes < 16) score -= 3.0f;
+        info.score = score;
+        candidates.push_back(c);
+    }
+    std::sort(candidates.begin(), candidates.end(), [&](int a, int b) { return channels[static_cast<size_t>(a)].score > channels[static_cast<size_t>(b)].score; });
+    melodyChannel = candidates.empty() ? -1 : candidates.front();
 }
 
 double MidiSong::tempoAt(double beat) const {

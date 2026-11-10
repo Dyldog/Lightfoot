@@ -81,6 +81,7 @@ void Game::draw(Canvas& canvas, const Frame& in, int64_t nowMs) {
     case State::HowTo: drawHowTo(canvas, nowMs); break;
     case State::Scores: drawScores(canvas, nowMs); break;
     case State::Songs: drawSongs(canvas, nowMs); break;
+    case State::SongInfo: drawSongInfo(canvas, nowMs); break;
     case State::Browse: break; // the toolkit browser drew itself during update
     case State::Playing: drawPlay(canvas, nowMs); break;
     case State::Paused:
@@ -584,6 +585,40 @@ void Game::drawSongs(Canvas& canvas, int64_t nowMs) {
     const char* hint = songCursor_ == 0 ? "The generated course, levels and all." : songCursor_ == rows - 1 ? "Any .mid on the SD card or internal storage." : "Press to play. The tune picks the platforms.";
     canvas.textCentered({0, 208, Canvas::width, 12}, hint, p.textDim, Font::Small);
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK     PRESS OR PLAY TO CHOOSE", p.textDim, Font::Small);
+}
+
+void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
+    const Palette& p = palette_;
+    beat_ = engine_.positionBeats();
+    drawSky(canvas, nowMs, beat_ * kSlotW);
+    canvas.fillAlpha({0, 0, Canvas::width, Canvas::height}, 0x000000, 160);
+    if (!song_) return;
+    canvas.textScaled(10, 6, song_->name.substr(0, 19), p.white, 1);
+    char buf[96];
+    const int bars = static_cast<int>(song_->lengthBeats / std::max(1, song_->beatsPerBar));
+    std::snprintf(buf, sizeof buf, "%.0f BPM   %d/4   %d bars   %zu notes%s", song_->tempoAt(0), song_->beatsPerBar, bars, song_->notes.size(), song_->hasDrums ? "" : "   no drums");
+    canvas.text(10, 26, buf, p.textDim, Font::Small);
+    canvas.text(10, 46, "LEAD INSTRUMENT  (the line you play)", p.accent, Font::Small);
+    const int shown = std::min<int>(8, static_cast<int>(song_->candidates.size()));
+    for (int i = 0; i < shown; ++i) {
+        const int c = song_->candidates[static_cast<size_t>(i)];
+        const MidiSong::ChannelInfo& ch = song_->channels[static_cast<size_t>(c)];
+        const int y = 62 + i * 14;
+        const bool sel = i == leadCursor_;
+        if (sel) {
+            canvas.fillAlpha({6, y - 2, Canvas::width - 12, 14}, p.accent, 70);
+            canvas.text(10, y, ">", p.accentHot, Font::Small);
+        }
+        std::snprintf(buf, sizeof buf, "ch %2d  %-15.15s %5d notes  %s", c + 1, MidiSong::programName(ch.program), ch.notes, i == 0 ? "best guess" : "");
+        canvas.text(22, y, buf, sel ? p.white : p.text, Font::Small);
+        // A small bar of how lead-like it looks.
+        const int w = static_cast<int>(std::clamp(ch.score / 8.0f, 0.0f, 1.0f) * 40);
+        canvas.fillAlpha({270, y + 3, 40, 5}, p.textDim, 60);
+        canvas.fill({270, y + 3, w, 5}, sel ? p.accentHot : p.textDim);
+    }
+    canvas.textCentered({0, 190, Canvas::width, 12}, "Wheel picks the instrument whose notes you play.", p.textDim, Font::Small);
+    canvas.textCentered({0, 204, Canvas::width, 12}, "The rest of the band plays itself.", p.textDim, Font::Small);
+    canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK          PLAY OR PRESS TO START", p.textDim, Font::Small);
 }
 
 void Game::drawPaused(Canvas& canvas, int64_t nowMs) {

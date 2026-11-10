@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,6 +39,23 @@ public:
     int melodyChannel = -1;          // the channel the course follows
     bool hasDrums = false;
     double lengthBeats = 0;          // end of the last note
+
+    /// Per channel (0..15): what was found, and how much it looks like a lead line.
+    struct ChannelInfo {
+        int notes = 0;
+        int program = -1;            // General MIDI program, -1 if never set
+        double meanPitch = 0;
+        float monophony = 0;         // share of onsets that are a single note
+        float coverage = 0;          // share of bars with a note
+        int lyrics = 0;              // lyric events in the same track (karaoke files)
+        float score = 0;             // lead-likeness; the highest becomes the melody
+    };
+    std::array<ChannelInfo, 16> channels{};
+    /// Channels with notes, best lead first.
+    std::vector<int> candidates;
+    static const char* programName(int program);
+    /// Repick the melody channel by hand (from the song screen).
+    void setMelodyChannel(int channel) { melodyChannel = channel; }
 
     double tempoAt(double beat) const;
     /// Shifts every event so the first note falls at `firstBeat`, dropping leading silence.

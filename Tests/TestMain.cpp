@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -381,6 +382,99 @@ void testMidiSong() {
     unsetenv("LIGHTFOOT_ROOT");
 }
 
+// A two-channel file: a busy overdriven guitar playing chords, and a flute
+// playing a sparse single line. The flute is the lead.
+std::vector<uint8_t> guitarAndFlute() {
+    std::vector<uint8_t> track;
+    auto varlen = [&](uint32_t v) {
+        uint8_t buf[4];
+        int n = 0;
+        do {
+            buf[n++] = static_cast<uint8_t>(v & 0x7f);
+            v >>= 7;
+        } while (v && n < 4);
+        for (int i = n - 1; i >= 0; --i) track.push_back(static_cast<uint8_t>(buf[i] | (i ? 0x80 : 0)));
+    };
+    struct Ev {
+        uint32_t tick;
+        uint8_t a, b, c;
+        bool two;
+    };
+    std::vector<Ev> ev;
+    ev.push_back({0, 0xc0, 29, 0, true});  // ch 1: overdriven guitar
+    ev.push_back({0, 0xc1, 73, 0, true});  // ch 2: flute
+    for (int beat = 0; beat < 64; ++beat) {
+        const uint32_t t = static_cast<uint32_t>(beat) * 96;
+        for (int n : {52, 59, 64, 67}) { // a power chord every beat, and again on the off-beat
+            ev.push_back({t, 0x90, static_cast<uint8_t>(n), 100, false});
+            ev.push_back({t + 40, 0x80, static_cast<uint8_t>(n), 0, false});
+            ev.push_back({t + 48, 0x90, static_cast<uint8_t>(n), 90, false});
+            ev.push_back({t + 88, 0x80, static_cast<uint8_t>(n), 0, false});
+        }
+        if (beat % 2 == 0) { // the flute, one note every other beat, walking up and down
+            const int note = 72 + (beat / 2) % 7;
+            ev.push_back({t, 0x91, static_cast<uint8_t>(note), 100, false});
+            ev.push_back({t + 150, 0x81, static_cast<uint8_t>(note), 0, false});
+        }
+    }
+    std::stable_sort(ev.begin(), ev.end(), [](const Ev& x, const Ev& y) { return x.tick < y.tick; });
+    uint32_t last = 0;
+    for (const Ev& e : ev) {
+        varlen(e.tick - last);
+        last = e.tick;
+        track.push_back(e.a);
+        track.push_back(e.b);
+        if (!e.two) track.push_back(e.c);
+    }
+    const uint8_t endMeta[] = {0x00, 0xff, 0x2f, 0x00};
+    track.insert(track.end(), endMeta, endMeta + 4);
+    std::vector<uint8_t> out = {'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 'M', 'T', 'r', 'k'};
+    const uint32_t len = static_cast<uint32_t>(track.size());
+    out.push_back(static_cast<uint8_t>(len >> 24));
+    out.push_back(static_cast<uint8_t>(len >> 16));
+    out.push_back(static_cast<uint8_t>(len >> 8));
+    out.push_back(static_cast<uint8_t>(len));
+    out.insert(out.end(), track.begin(), track.end());
+    return out;
+}
+
+void testLeadDetection() {
+    std::string error;
+    auto song = lightfoot::MidiSong::parse(guitarAndFlute(), &error);
+    check(song != nullptr, "the guitar-and-flute file parses");
+    if (!song) return;
+    check(song->channels[0].program == 29 && song->channels[1].program == 73, "programs are read per channel");
+    check(song->channels[0].notes == 512 && song->channels[1].notes == 32, "note counts per channel");
+    check(song->channels[1].monophony > 0.99f && song->channels[0].monophony < 0.1f, "monophony tells a line from chords");
+    check(song->melodyChannel == 1, "the sparse flute is the lead, not the busy guitar");
+    check(song->candidates.size() == 2 && song->candidates[0] == 1, "candidates are ordered best first");
+    check(std::string(lightfoot::MidiSong::programName(73)) == "Flute", "program names");
+    // The song screen lets the wheel change the lead and remembers it.
+    setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
+    lightfoot::paths::makeDirs("build/test-card/Lightfoot/Songs");
+    {
+        std::ofstream f("build/test-card/Lightfoot/Songs/Duet.mid", std::ios::binary);
+        const std::vector<uint8_t> bytes = guitarAndFlute();
+        f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    lightfoot::Game game;
+    lightfoot::HostLoop loop(game);
+    int64_t now = 1000;
+    loop.step(now);
+    check(game.loadSong("build/test-card/Lightfoot/Songs/Duet.mid"), "duet loads");
+    game.setState(lightfoot::Game::State::SongInfo, now);
+    loop.push(lightfoot::panelmidi::encoder(1));
+    loop.step(now += 16);
+    check(game.song()->melodyChannel == 0, "the wheel moves the lead to the next candidate");
+    loop.pushButtonTap(IN_PLAY);
+    loop.step(now += 16);
+    loop.step(now += 16);
+    check(game.state() == lightfoot::Game::State::Playing, "PLAY starts the song from the song screen");
+    lightfoot::Game again;
+    check(again.loadSong("build/test-card/Lightfoot/Songs/Duet.mid") && again.song()->melodyChannel == 0, "the chosen lead is remembered for the song");
+    unsetenv("LIGHTFOOT_ROOT");
+}
+
 void testMenuFlow() {
     setenv("LIGHTFOOT_ROOT", "build/test-card", 1);
     lightfoot::Game game;
@@ -425,6 +519,7 @@ int main() {
     testTwinNeedsBothPads();
     testMenuFlow();
     testMidiSong();
+    testLeadDetection();
     if (failures) {
         std::printf("%d failure(s)\n", failures);
         return 1;

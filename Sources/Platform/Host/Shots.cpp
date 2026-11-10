@@ -114,6 +114,9 @@ int runShots(const std::string& dir, int scale) {
     s.save(loop, "08-songs");
     loop.pushButtonTap(IN_ENCODER);
     s.run(loop, 60);
+    s.save(loop, "08b-song-info");
+    loop.pushButtonTap(IN_PLAY);
+    s.run(loop, 60);
     for (int step = 0; step < 1300 && game.state() == Game::State::Playing; ++step) {
         s.frame(loop);
         const int64_t cue = game.cueSlot();
