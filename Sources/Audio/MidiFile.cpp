@@ -349,6 +349,8 @@ bool MidiSong::writeDemo(const std::string& path) {
         uint8_t status, d1, d2;
     };
     std::vector<Ev> events;
+    events.push_back({0, 0xc0, 73, 0}); // the tune: a flute
+    events.push_back({0, 0xc1, 33, 0}); // the bass
     auto note = [&](uint32_t tick, int channel, int pitch, int vel, uint32_t len) {
         events.push_back({tick, static_cast<uint8_t>(0x90 | channel), static_cast<uint8_t>(pitch), static_cast<uint8_t>(vel)});
         events.push_back({tick + len, static_cast<uint8_t>(0x80 | channel), static_cast<uint8_t>(pitch), 0});
@@ -391,7 +393,7 @@ bool MidiSong::writeDemo(const std::string& path) {
         last = e.tick;
         track.push_back(e.status);
         track.push_back(e.d1);
-        track.push_back(e.d2);
+        if ((e.status & 0xf0) != 0xc0) track.push_back(e.d2);
     }
     const uint8_t endMeta[] = {0x00, 0xff, 0x2f, 0x00};
     track.insert(track.end(), endMeta, endMeta + sizeof endMeta);

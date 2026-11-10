@@ -598,7 +598,7 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
     const int bars = static_cast<int>(song_->lengthBeats / std::max(1, song_->beatsPerBar));
     std::snprintf(buf, sizeof buf, "%.0f BPM   %d/4   %d bars   %zu notes%s", song_->tempoAt(0), song_->beatsPerBar, bars, song_->notes.size(), song_->hasDrums ? "" : "   no drums");
     canvas.text(10, 26, buf, p.textDim, Font::Small);
-    canvas.text(10, 46, "LEAD INSTRUMENT  (the line you play)", p.accent, Font::Small);
+    canvas.text(10, 46, "LEAD INSTRUMENT  (the line you play, best guess first)", p.accent, Font::Small);
     const int shown = std::min<int>(8, static_cast<int>(song_->candidates.size()));
     for (int i = 0; i < shown; ++i) {
         const int c = song_->candidates[static_cast<size_t>(i)];
@@ -609,7 +609,7 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
             canvas.fillAlpha({6, y - 2, Canvas::width - 12, 14}, p.accent, 70);
             canvas.text(10, y, ">", p.accentHot, Font::Small);
         }
-        std::snprintf(buf, sizeof buf, "ch %2d  %-15.15s %5d notes  %s", c + 1, MidiSong::programName(ch.program), ch.notes, i == 0 ? "best guess" : "");
+        std::snprintf(buf, sizeof buf, "ch %2d  %-15.15s %5d notes", c + 1, MidiSong::programName(ch.program), ch.notes);
         canvas.text(22, y, buf, sel ? p.white : p.text, Font::Small);
         // A small bar of how lead-like it looks.
         const int w = static_cast<int>(std::clamp(ch.score / 8.0f, 0.0f, 1.0f) * 40);
