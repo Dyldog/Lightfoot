@@ -1,27 +1,68 @@
 # Lightfoot
 
-A rhythm platformer for the Akai MPC Sample, played on the pads.
+A rhythm game for the Akai MPC Sample in the Guitar Hero mould, played on
+the pads.
 
-The course scrolls at the music's tempo. The sixteen pads are the next four
-beats: each column is one beat, the left column is now. One pad per column is
-lit, at the height of the platform you have to reach. When a lit pad arrives
-in the left column you hit it on the beat to jump. Only the lit pad counts.
-Two lit pads together are a long jump over a gap; a dim red pad is a decoy.
-Three lives, a new level every 32 beats, scores kept on the card.
+![A song run: gems coming down the highway, the frets at the strike line, the rock meter on the left, streak and multiplier](docs/screens/09-song-run.png)
+
+Gems come down a four-lane highway at the music's tempo, and the sixteen
+pads are the same highway: each column is a lane, each row is a step ahead,
+the bottom row is the strike line. When a gem reaches the line you hit a pad
+in its lane on the beat. On time is PERFECT, close is GOOD, early breaks
+your streak. Two gems joined by a bar are a chord, hit both lanes. A dark
+crossed gem is a decoy, leave it. Misses drain the rock meter and hits fill
+it; empty and you fail. Every ten hits in a row raise the multiplier, every
+32 beats raise the level, and K3 picks Easy to Expert. Scores are kept on
+the card.
 
 Drop a Standard MIDI File into `Lightfoot/Songs/` on the card and it becomes
-the music and the course: the tune picks the platforms, the file's tempo
-drives the scroll, and the run ends with SONG CLEAR. A demo tune is written
-there on first run.
+the music and the chart: the game picks the lead instrument (the wheel can
+overrule it), the lead's notes become the gems, the lanes follow the shape
+of the tune, the file's tempo drives the highway, and the melody only sounds
+when you hit it. The run ends with SONG CLEAR. A demo tune is written there
+on first run.
 
 Everything is synthesised on the device: the music, the effects, the night
-skyline. The panel plays along: the pads are the game, TAP TEMPO is the
-metronome, the level meters show combo heat and the kick, the track LEDs the
-level, the right-hand buttons chase on a level-up, K1 repaints the night, K2
-opens the filter, K3 picks the start level, the fader is an assist.
+skyline. The panel plays along: the pads are the highway, TAP TEMPO is the
+metronome, the level meters show the rock meter and the kick, the track LEDs
+the level, the right-hand buttons chase on a level-up, K1 repaints the night,
+K2 opens the filter, K3 picks the difficulty, the fader is an assist.
 
 Runs from the SD card like any autorun app. Nothing on the device is
 modified. Firmware 1.3.0.12.
+
+## Screens
+
+<table>
+<tr>
+<td><img src="docs/screens/00-title.png" width="320" alt="The title screen"></td>
+<td><img src="docs/screens/03-perfect.png" width="320" alt="Endless mode mid-run, a PERFECT at the strike line"></td>
+</tr>
+<tr>
+<td align="center">Title</td>
+<td align="center">Endless, level 4</td>
+</tr>
+<tr>
+<td><img src="docs/screens/08-songs.png" width="320" alt="The Songs list"></td>
+<td><img src="docs/screens/08b-song-info.png" width="320" alt="A song's page with the lead instrument picked"></td>
+</tr>
+<tr>
+<td align="center">Songs on the card</td>
+<td align="center">A song's page: pick the lead</td>
+</tr>
+<tr>
+<td><img src="docs/screens/06-game-over.png" width="320" alt="Game over with the run's tally"></td>
+<td><img src="docs/screens/07-scores.png" width="320" alt="The high score table"></td>
+</tr>
+<tr>
+<td align="center">Game over</td>
+<td align="center">High scores</td>
+</tr>
+</table>
+
+The screenshots are taken by the simulator itself: `make shots` renders every
+screen headlessly into `build/shots/`, and `make screens` copies the ones the
+README and manual use into `docs/screens/`.
 
 - [MANUAL.md](MANUAL.md) is how to play; [Lightfoot-Manual.pdf](Lightfoot-Manual.pdf) is generated from it and ships in the package.
 - [PLAN.md](PLAN.md) has the design and what is next.
