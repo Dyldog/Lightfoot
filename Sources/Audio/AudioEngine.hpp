@@ -32,6 +32,7 @@ public:
     void setAttached(bool on) { attached_ = on; }
     bool attached() const { return attached_; }
     void setMasterGain(float gain) { masterGain_ = gain; }
+    float masterGain() const { return masterGain_; }
 
     // Clock
     /// The current beat. Advances by wall time when no output is attached.

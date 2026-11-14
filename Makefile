@@ -37,7 +37,7 @@ TEST_SRC := $(shell find Tests -name '*.cpp' 2>/dev/null)
 
 TK_COMMON := ui.c widgets.c input.c filebrowser.c
 TK_DEVICE := app.c screen.c surface.c
-TA_SRC    := pcm.c pcm_hw.c
+TA_SRC    := pcm.c pcm_hw.c mixer.c mixer_hw.c
 
 HOST_APP_OBJ := $(patsubst %.cpp,$(BUILD)/host/%.o,$(APP_SRC))
 HOST_SIM_OBJ := $(patsubst %.cpp,$(BUILD)/host/%.o,$(HOST_SRC))
