@@ -545,11 +545,15 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
     std::snprintf(buf, sizeof buf, "%.0f BPM   %d/4   %d bars   %zu notes%s", song_->tempoAt(0), song_->beatsPerBar, bars, song_->notes.size(), song_->hasDrums ? "" : "   no drums");
     canvas.text(10, 26, buf, p.textDim, Font::Small);
     canvas.text(10, 46, "LEAD INSTRUMENT  (best guess first)", p.accent, Font::Small);
-    const int shown = std::min<int>(7, static_cast<int>(song_->candidates.size()));
-    for (int i = 0; i < shown; ++i) {
+    // Seven rows; the window follows the cursor so every channel can be reached.
+    constexpr int kRows = 7;
+    const int count = static_cast<int>(song_->candidates.size());
+    const int shown = std::min(kRows, count);
+    const int top = std::clamp(leadCursor_ - kRows / 2, 0, std::max(0, count - kRows));
+    for (int i = top; i < top + shown; ++i) {
         const int c = song_->candidates[static_cast<size_t>(i)];
         const MidiSong::ChannelInfo& ch = song_->channels[static_cast<size_t>(c)];
-        const int y = 62 + i * 14;
+        const int y = 62 + (i - top) * 14;
         const bool sel = i == leadCursor_;
         if (sel) {
             canvas.fillAlpha({6, y - 2, Canvas::width - 12, 14}, p.accent, 70);
@@ -561,11 +565,23 @@ void Game::drawSongInfo(Canvas& canvas, int64_t nowMs) {
         canvas.fillAlpha({270, y + 3, 40, 5}, p.textDim, 60);
         canvas.fill({270, y + 3, w, 5}, sel ? p.accentHot : p.textDim);
     }
+    if (top > 0) canvas.text(Canvas::width - 14, 46, "^", p.textDim, Font::Small);
+    if (top + shown < count) canvas.text(Canvas::width - 14, 62 + (kRows - 1) * 14, "v", p.textDim, Font::Small);
     std::snprintf(buf, sizeof buf, "DIFFICULTY  %s  (K3)", difficultyName(difficulty_));
-    canvas.text(10, 176, buf, p.accent, Font::Small);
+    canvas.text(10, 164, buf, p.accent, Font::Small);
     static const char* const hints[4] = {"the strong beats of the tune, no chords", "every beat of the tune, chords from level 3", "every note, decoys from level 5", "every note, chords and decoys, 10% faster"};
-    canvas.text(10, 188, hints[std::clamp(difficulty_, 0, 3)], p.textDim, Font::Small);
-    canvas.textCentered({0, 208, Canvas::width, 12}, "Wheel picks the line you play.", p.textDim, Font::Small);
+    canvas.text(10, 176, hints[std::clamp(difficulty_, 0, 3)], p.textDim, Font::Small);
+    // The audition: where the solo line is in the song, in the sixteenths the pads jump to.
+    const double length = std::max(1.0, song_->lengthBeats);
+    const double at = std::clamp(beat_ / length, 0.0, 1.0);
+    const int barX = 10, barW = Canvas::width - 20, barY = 194;
+    for (int seg = 0; seg < 16; ++seg) {
+        const int x0 = barX + seg * barW / 16, x1 = barX + (seg + 1) * barW / 16;
+        const bool past = (seg + 1) / 16.0 <= at;
+        canvas.fillAlpha({x0, barY, x1 - x0 - 1, 6}, past ? p.accent : p.textDim, past ? 140 : 60);
+    }
+    canvas.fill({barX + static_cast<int>(at * (barW - 2)), barY - 2, 2, 10}, p.accentHot);
+    canvas.textCentered({0, 208, Canvas::width, 12}, "Wheel picks the lead, solo. Pads scrub the song.", p.textDim, Font::Small);
     canvas.textCentered({0, 226, Canvas::width, 12}, "B1 BACK          PLAY OR PRESS TO START", p.textDim, Font::Small);
 }
 
@@ -633,6 +649,14 @@ uint32_t Game::padColor(int pad, int64_t nowMs) const {
         }
         if (s.decoy >= 0 && lane == laneOf(s.decoy)) return row == 3 ? 0x5a0000 : 0x2a0000;
         return 0;
+    }
+    case State::SongInfo: {
+        // A progress bar across the pads: pad 1 the start, pad 16 the end, the current sixteenth bright.
+        if (!song_) return 0;
+        const double at = std::clamp(beat_ / std::max(1.0, song_->lengthBeats), 0.0, 0.9999);
+        const int here = static_cast<int>(at * 16);
+        if (pad == here) return Palette::scale(p.accentHot, 0.6f + 0.4f * static_cast<float>(1.0 - beatPhase()));
+        return pad < here ? Palette::scale(p.accent, 0.18f) : Palette::scale(p.row[lane], 0.04f);
     }
     case State::GameOver: {
         const float t = 0.5f + 0.5f * std::sin(nowMs * 0.004f + row * 0.6f);

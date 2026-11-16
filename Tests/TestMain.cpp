@@ -395,6 +395,26 @@ void testMidiSong() {
             for (float v : out) hitPeak = std::max(hitPeak, std::fabs(v));
         }
         check(hitPeak > 0.05f, "a hit sounds the note");
+        // The song page's audition: the chosen channel alone, manual or not,
+        // and a channel with nothing in it is silence (no pulse added).
+        solo.setPreview(quiet->melodyChannel);
+        solo.seek(8);
+        float auditionPeak = 0;
+        for (int b = 0; b < 300; ++b) {
+            solo.render(out.data(), 256);
+            for (float v : out) auditionPeak = std::max(auditionPeak, std::fabs(v));
+        }
+        check(auditionPeak > 0.05f, "the audition plays the chosen channel on its own");
+        solo.setPreview(15);
+        solo.seek(8);
+        float emptyPeak = 0;
+        for (int b = 0; b < 300; ++b) {
+            solo.render(out.data(), 256);
+            if (b < 20) continue; // the cut-off notes' tails
+            for (float v : out) emptyPeak = std::max(emptyPeak, std::fabs(v));
+        }
+        check(emptyPeak < 0.01f, "auditioning an empty channel is silence");
+        solo.setPreview(-1);
         solo.setSong(nullptr);
     }
     game.engine().setAttached(false);
@@ -500,13 +520,22 @@ void testLeadDetection() {
     loop.step(now);
     check(game.loadSong("build/test-card/Lightfoot/Songs/Duet.mid"), "duet loads");
     game.setState(lightfoot::Game::State::SongInfo, now);
+    check(game.engine().preview() == game.song()->melodyChannel && game.engine().song() == game.song(), "the song page auditions the guessed lead on its own");
     loop.push(lightfoot::panelmidi::encoder(1));
     loop.step(now += 16);
     check(game.song()->melodyChannel == 0, "the wheel moves the lead to the next candidate");
+    check(game.engine().preview() == 0, "the audition follows the wheel");
+    loop.push(lightfoot::panelmidi::encoder(5));
+    loop.step(now += 16);
+    check(game.song()->melodyChannel == 0, "the wheel stops at the last candidate");
+    loop.pushPadTap(8); // pad 9: nine sixteenths in, to the bar
+    loop.step(now += 16);
+    check(std::fabs(game.engine().positionBeats() - 32.0) < 0.5, "a pad jumps the audition to that sixteenth of the song, on a bar");
     loop.pushButtonTap(IN_PLAY);
     loop.step(now += 16);
     loop.step(now += 16);
     check(game.state() == lightfoot::Game::State::Playing, "PLAY starts the song from the song screen");
+    check(game.engine().preview() < 0, "the run plays the whole band again");
     lightfoot::Game again;
     check(again.loadSong("build/test-card/Lightfoot/Songs/Duet.mid") && again.song()->melodyChannel == 0, "the chosen lead is remembered for the song");
     unsetenv("LIGHTFOOT_ROOT");

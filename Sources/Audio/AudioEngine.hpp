@@ -41,6 +41,8 @@ public:
     double tempo() const { return tempo_; }
     /// Restart the beat count (a new game) at `startBeat`.
     void resetBeat(double startBeat = 0);
+    /// Jump the song to `beat`, cutting whatever is sounding (the song page scrubbing).
+    void seek(double beat);
     void setPaused(bool paused) { paused_ = paused; }
     bool paused() const { return paused_; }
 
@@ -62,6 +64,10 @@ public:
     /// returns to the procedural music. The song must outlive its use.
     void setSong(const MidiSong* song);
     const MidiSong* song() const { return song_.load(); }
+    /// Audition one of the song's channels on its own: only its notes play,
+    /// nothing is held back for the pads and no pulse is added. -1 ends it.
+    void setPreview(int channel) { preview_ = channel; }
+    int preview() const { return preview_; }
 
     // Meters (last rendered block)
     float peakLeft() const { return peakLeft_; }
@@ -128,6 +134,10 @@ private:
     float menuFade_ = 0;
     std::atomic<const MidiSong*> song_{nullptr};
     std::atomic<bool> songRewind_{true};
+    std::atomic<bool> seekPending_{false};
+    std::atomic<double> seekTo_{0.0};
+    std::atomic<bool> hush_{false};
+    std::atomic<int> preview_{-1};
     size_t songIndex_ = 0;
     void playNote(int channel, int note, int velocity, double lengthBeats, double beatSeconds);
 };

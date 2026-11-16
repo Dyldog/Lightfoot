@@ -64,9 +64,13 @@ card**. Choosing a song opens its page: tempo, length, and the **lead
 instrument**, the line you will play. The game guesses it from the file,
 preferring a single-note line in the singing register on a melody
 instrument that is there for most of the song, and lists the other channels
-in order. If it picked a guitar riff instead of the vocal line, turn the
-wheel to the right one; the choice is remembered for that song. **PLAY** or
-the wheel press starts.
+in order. While the page is open the song plays with the chosen line on its
+own, so you hear what you would be playing; turn the wheel and the next
+channel takes over from the same place. If it picked a guitar riff instead
+of the vocal line, turn the wheel to the right one; the choice is remembered
+for that song. The pads jump through the song, pad 1 the start and pad 16
+the last sixteenth, and the bar under the list shows where you are. **PLAY**
+or the wheel press starts.
 
 ![A song's page: the lead instrument the game will hand you](docs/screens/08b-song-info.png)
 
@@ -91,7 +95,8 @@ What the game does with a file:
   shows a tail on the highway. The rest of the tune plays itself along with
   the band, and the whole melody follows your hands: a hit sounds its note,
   late and it comes in late, miss and the tune drops out until your next
-  hit. A PERFECT plays the note a little harder.
+  hit. A PERFECT plays the note a little harder, and nothing else: the tune
+  is the only sound a hit makes.
 - Every other channel is played by the built-in synth: drums on channel 10
   onto the kit, low notes as bass, long notes as pads, the rest as plucks. A
   file without drums gets a kick and hats underneath so the beat stays
@@ -108,7 +113,7 @@ What the game does with a file:
 
 | Control | Action |
 |---|---|
-| Pads 1–16 | The highway. Hit a pad in the gem's lane when it reaches the bottom row. |
+| Pads 1–16 | The highway. Hit a pad in the gem's lane when it reaches the bottom row. On a song's page, jump to that sixteenth of the song. |
 | **PLAY** | Start a run from the title, or pause and resume one. |
 | **STOP** | Pause a run. From the pause screen, quit the run. |
 | **SHIFT** + **STOP** | Twice within three seconds: quit to stock, from anywhere. |

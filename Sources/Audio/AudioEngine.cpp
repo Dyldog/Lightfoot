@@ -33,6 +33,7 @@ float expEnv(double t, double rate) {
 AudioEngine::AudioEngine(int sampleRate) : sampleRate_(sampleRate) {}
 
 double AudioEngine::beat(int64_t nowMs) {
+    if (!attached_) seekPending_ = false; // this is the clock here: the seek has already taken
     if (!attached_ && lastClockMs_ > 0 && !paused_ && nowMs > lastClockMs_) {
         const double elapsed = std::min<int64_t>(nowMs - lastClockMs_, 1000) / 1000.0;
         beat_ = beat_ + elapsed * tempo_ / 60.0;
@@ -42,9 +43,17 @@ double AudioEngine::beat(int64_t nowMs) {
 }
 
 void AudioEngine::resetBeat(double startBeat) {
+    // Written here for the unattached clock; the audio thread applies it again
+    // at its next block, so a block in flight cannot put the old beat back.
     beat_ = startBeat;
-    lastStep_ = static_cast<int>(std::floor(startBeat * 4)) - 1;
+    seekTo_ = startBeat;
+    seekPending_ = true;
     songRewind_ = true;
+}
+
+void AudioEngine::seek(double beat) {
+    resetBeat(beat);
+    hush_ = true;
 }
 
 void AudioEngine::setSong(const MidiSong* song) {
@@ -227,7 +236,7 @@ void AudioEngine::onStep(int step) {
     const MidiSong* song = play ? song_.load() : nullptr;
     if (song) {
         // The file carries the music. Keep a pulse under it only if it has no drums.
-        if (!song->hasDrums) {
+        if (!song->hasDrums && preview_ < 0) {
             if (inBar % 4 == 0) {
                 Voice* v = allocate(Voice::Kick);
                 v->amp = 0.8f;
@@ -420,6 +429,16 @@ float AudioEngine::renderVoice(Voice& v, double dt, float& right) {
 }
 
 void AudioEngine::render(float* out, int frames) {
+    if (seekPending_.exchange(false)) {
+        const double to = seekTo_;
+        beat_ = to;
+        lastStep_ = static_cast<int>(std::floor(to * 4)) - 1;
+        songRewind_ = true;
+    }
+    if (hush_.exchange(false)) {
+        for (Voice& v : voices_)
+            if (v.music) v.kind = Voice::Off;
+    }
     // Pull the sounds the game asked for since the last block.
     while (queueTail_.load(std::memory_order_acquire) != queueHead_.load(std::memory_order_acquire)) {
         const int tail = queueTail_.load(std::memory_order_relaxed);
@@ -454,8 +473,14 @@ void AudioEngine::render(float* out, int frames) {
                     while (songIndex_ < song->notes.size() && song->notes[songIndex_].beat < beat) ++songIndex_;
                 }
                 const double beatSeconds = 60.0 / std::max(30.0, tempo_.load());
+                const int preview = preview_;
                 while (songIndex_ < song->notes.size() && song->notes[songIndex_].beat <= beat) {
                     const MidiNote& n = song->notes[songIndex_++];
+                    if (preview >= 0) {
+                        // Auditioning one channel: the whole line, nothing else.
+                        if (n.channel == preview) playNote(n.channel, n.note, n.velocity, n.length, beatSeconds);
+                        continue;
+                    }
                     if (n.manual) continue; // the player's: sounded by the pads
                     if (n.channel == song->melodyChannel) {
                         // A melody note thinned out of the course: it belongs to the player's

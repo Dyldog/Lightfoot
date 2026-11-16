@@ -106,6 +106,10 @@ private:
     void updateSongs(Canvas& canvas, const Frame& in, int64_t nowMs);
     void updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs);
     void updateSongInfo(Canvas& canvas, const Frame& in, int64_t nowMs);
+    /// Audition the chosen lead on the song page: solo, from where it next has notes.
+    void previewLead(bool keepPlace);
+    /// Jump the song page's audition to `beat`.
+    void previewSeek(double beat);
     void updatePlaying(Canvas& canvas, const Frame& in, int64_t nowMs);
     void refreshSongList();
     void ensureDemoSong();

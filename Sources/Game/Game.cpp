@@ -197,15 +197,24 @@ void Game::setState(State s, int64_t nowMs) {
     case State::Scores:
     case State::Songs:
     case State::Browse:
-    case State::SongInfo:
     case State::GameOver:
         engine_.setPaused(false);
+        engine_.setPreview(-1);
         engine_.setMode(AudioEngine::Mode::Menu);
         engine_.setTempo(kMenuTempo);
         engine_.setIntensity(1);
         break;
+    case State::SongInfo:
+        // The page auditions the lead: the song plays with that channel alone.
+        engine_.setPaused(false);
+        engine_.setSong(song_.get());
+        engine_.setMode(AudioEngine::Mode::Play);
+        engine_.setIntensity(6); // the filter open, nothing procedural to drive
+        previewLead(false);
+        break;
     case State::Playing:
         engine_.setPaused(false);
+        engine_.setPreview(-1);
         engine_.setMode(AudioEngine::Mode::Play);
         break;
     case State::Paused:
@@ -442,11 +451,24 @@ void Game::updateSongInfo(Canvas& canvas, const Frame& in, int64_t nowMs) {
     }
     const int count = static_cast<int>(song_->candidates.size());
     if (const int d = in.encoder(); d && count > 0) {
-        leadCursor_ = std::clamp(leadCursor_ + d, 0, std::min(count, 8) - 1);
+        leadCursor_ = std::clamp(leadCursor_ + d, 0, count - 1);
         song_->setMelodyChannel(song_->candidates[static_cast<size_t>(leadCursor_)]);
         leadChoice_[song_->name] = song_->melodyChannel;
-        engine_.trigger(Sfx::Tick);
+        previewLead(true);
     }
+    // The pads scrub: pad 1 is the start of the song, pad 16 the last sixteenth.
+    for (int pad = 0; pad < 16; ++pad) {
+        if (in.padHit(pad) < 0) continue;
+        const double bar = std::max(1, song_->beatsPerBar);
+        const double segment = song_->lengthBeats / 16.0;
+        previewSeek(std::min(std::round(pad * segment / bar) * bar, song_->lengthBeats));
+        padFlashMs_[static_cast<size_t>(pad)] = nowMs;
+        padFlashColor_[static_cast<size_t>(pad)] = palette_.accentHot;
+    }
+    // Follow the file's tempo, and go round again at the end.
+    beat_ = engine_.positionBeats();
+    engine_.setTempo(song_->tempoAt(std::max(0.0, beat_)));
+    if (beat_ > song_->lengthBeats + 2) previewLead(false);
     if (in.pressed(IN_B1) || in.pressed(IN_STOP)) {
         engine_.trigger(Sfx::Select);
         setState(State::Songs, nowMs);
@@ -456,6 +478,33 @@ void Game::updateSongInfo(Canvas& canvas, const Frame& in, int64_t nowMs) {
         saveSettings();
         startGame(nowMs);
     }
+}
+
+void Game::previewLead(bool keepPlace) {
+    if (!song_) return;
+    const int channel = song_->melodyChannel;
+    engine_.setPreview(channel);
+    // Start where the line next has something to play: from here if it is
+    // about to, otherwise its next note, otherwise its first.
+    const double here = keepPlace ? engine_.positionBeats() : -1;
+    double first = -1, next = -1;
+    for (const MidiNote& n : song_->notes) {
+        if (n.channel != channel) continue;
+        if (first < 0) first = n.beat;
+        if (n.beat >= here - 0.5) {
+            next = n.beat;
+            break;
+        }
+    }
+    if (next < 0) next = first;
+    if (next < 0) next = 0;
+    if (keepPlace && next <= here + 2) return;
+    previewSeek(std::max(0.0, next - 0.25));
+}
+
+void Game::previewSeek(double beat) {
+    engine_.seek(beat);
+    beat_ = beat;
 }
 
 void Game::updateBrowser(Canvas& canvas, const Frame& in, int64_t nowMs) {
@@ -626,7 +675,6 @@ void Game::resolve(Hit hit, double deltaBeats, int64_t nowMs) {
         engine_.noteOn(song_->melodyChannel, s.note, velocity, s.noteBeats);
         if (s.note2 >= 0) engine_.noteOn(song_->melodyChannel, s.note2, velocity, s.noteBeats);
         engine_.setMelodyGate(true);
-        if (hit == Hit::Perfect) engine_.trigger(Sfx::Tick);
     } else {
         engine_.trigger(hit == Hit::Perfect ? Sfx::Perfect : Sfx::Good);
     }
