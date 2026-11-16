@@ -8,7 +8,8 @@ OUT=${2:?output directory}
 MANUAL=${3:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -p "$OUT"
-set -- --name lightfoot --bin "$BIN" --out "$OUT"
+# docs/icon.png becomes autorun/icon.png, the tile mpc-boot-thingy draws for the app.
+set -- --name lightfoot --bin "$BIN" --out "$OUT" --add "$ROOT/docs/icon.png"
 # The PDF manual rides along on the card when it has been built.
 if [ -n "$MANUAL" ] && [ -f "$MANUAL" ]; then set -- "$@" --add "$MANUAL"; fi
 "$ROOT/deps/mpc-ui-toolkit/tools/pack-autorun.sh" "$@"

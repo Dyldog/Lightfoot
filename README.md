@@ -105,6 +105,7 @@ Sources/
   Platform/   Host (SDL2 simulator, screenshots) and Device (DRM/panel via the toolkit, tinyalsa)
 Tests/        unit tests (make test)
 deps/         submodules: mpc-ui-toolkit, tinyalsa
+docs/         icon.png (the boot menu tile, packed as autorun/icon.png), screens/, manual.json
 tools/        package.sh, build-manual.py, check-manual.py, hooks/
 ```
 
